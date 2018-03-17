@@ -38,10 +38,71 @@ class Model(ModelDesc):
 		pass
 
 	def _build_graph(self, inputs):
-		pass
+		sImg2d # sImg the projection 2D, reshape from 
+		VGG_MEAN = np.array([123.68, 116.779, 103.939])  # RGB
+		VGG_MEAN_TENSOR = tf.constant(VGG_MEAN, dtype=tf.float32)
 
+		with tf.variable_scope('VGG19'):
+
+			sImg2d = sImg2d - VGG_MEAN_TENSOR
+
+			# VGG 19
+			with varreplace.freeze_variables():
+				with argscope(Conv2D, kernel_shape=3, nl=tf.nn.relu):
+					conv1_1 = Conv2D('conv1_1', sImgs, 64)
+					conv1_2 = Conv2D('conv1_2', conv1_1, 64)
+					pool1 = MaxPooling('pool1', conv1_2, 2)  # 64
+					conv2_1 = Conv2D('conv2_1', pool1, 128)
+					conv2_2 = Conv2D('conv2_2', conv2_1, 128)
+					pool2 = MaxPooling('pool2', conv2_2, 2)  # 32
+					conv3_1 = Conv2D('conv3_1', pool2, 256)
+					conv3_2 = Conv2D('conv3_2', conv3_1, 256)
+					conv3_3 = Conv2D('conv3_3', conv3_2, 256)
+					conv3_4 = Conv2D('conv3_4', conv3_3, 256)
+					pool3 = MaxPooling('pool3', conv3_4, 2)  # 16
+					conv4_1 = Conv2D('conv4_1', pool3, 512)
+					conv4_2 = Conv2D('conv4_2', conv4_1, 512)
+					conv4_3 = Conv2D('conv4_3', conv4_2, 512)
+					conv4_4 = Conv2D('conv4_4', conv4_3, 512)
+					pool4 = MaxPooling('pool4', conv4_4, 2)  # 8
+					conv5_1 = Conv2D('conv5_1', pool4, 512)
+					conv5_2 = Conv2D('conv5_2', conv5_1, 512)
+					conv5_3 = Conv2D('conv5_3', conv5_2, 512)
+					conv5_4 = Conv2D('conv5_4', conv5_3, 512)
+					pool5 = MaxPooling('pool5', conv5_4, 2)  # 4
+					feats = pool5 # Take the feature map
+		with tf.variable_scope('Decoder'):
+			# with varreplace.freeze_variables():
+				with argscope([Conv2D, Deconv2D], kernel_shape=3, nl=tf.nn.relu):
+					
+					conv5_4 = Conv2D('conv5_4', feats,   512)
+					conv5_3 = Conv2D('conv5_3', conv5_2, 512)
+					conv5_2 = Conv2D('conv5_2', conv5_1, 512)
+					conv5_1 = Conv2D('conv5_1', pool4, 512)
+					pool4 = Deconv2D('pool4', conv4_4, 2)  # 8
+					conv4_4 = Conv2D('conv4_4', conv4_3, 512)
+					conv4_3 = Conv2D('conv4_3', conv4_2, 512)
+					conv4_2 = Conv2D('conv4_2', conv4_1, 512)
+					conv4_1 = Conv2D('conv4_1', pool3, 512)
+					pool3 = Deconv2D('pool3', conv3_4, 2)  # 16
+					conv3_4 = Conv2D('conv3_4', conv3_3, 256)
+					conv3_3 = Conv2D('conv3_3', conv3_2, 256)
+					conv3_2 = Conv2D('conv3_2', conv3_1, 256)
+					conv3_1 = Conv2D('conv3_1', pool2, 256)
+					pool2 = Deconv2D('pool2', conv2_2, 2)  # 32
+					conv2_2 = Conv2D('conv2_2', conv2_1, 128)
+					conv2_1 = Conv2D('conv2_1', pool1, 128)
+					pool1 = Deconv2D('pool1', conv1_2, 2)  # 64
+					conv1_2 = Conv2D('conv1_2', conv1_1, 64)
+					conv1_1 = Conv2D('conv1_1', conv1_2, 64)
+
+					dImg2d =  Conv2D('conv0_1', conv1_1, 3) # destination
+
+		# Build loss in here
 	def _get_optimizer(self):
-		pass
+		lr  = tf.get_variable('learning_rate', initializer=1e-4, trainable=False)
+		opt = tf.train.AdamOptimizer(lr)
+		return opt
 
 ###################################################################################################
 def render(model_path, volume_path, style_path):
@@ -74,7 +135,7 @@ if __name__ == '__main__':
 
 		if args.load:
             session_init = SaverRestore(args.load)
-        else:
+        else: # For training from scratch, read the vgg model from args.vgg19
             assert os.path.isfile(args.vgg19)
             param_dict = dict(np.load(args.vgg19))
             param_dict = {'VGG19/' + name: value for name, value in six.iteritems(param_dict)}
