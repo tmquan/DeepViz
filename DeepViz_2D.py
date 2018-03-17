@@ -187,7 +187,7 @@ class ImageDataFlow(RNGDataFlow):
 			if self.isTrain:
 				# image = skimage.io.imread(images[rand_image])		
 				style = cv2.imread(styles[rand_style], cv2.IMREAD_COLOR)
-				
+
 				style = self.central_crop(style)
 				style = self.resize_image(style, size=512)
 				style = self.random_crop (style, size=256)
@@ -221,13 +221,13 @@ class ImageDataFlow(RNGDataFlow):
 			image = imresize(image, (size, dimx*size//dimy), interp='bilinear')
 		return image
 
-	def random_crop(image, crop_size):
+	def random_crop(self, image, size=256):
 		shape = image.shape
 		dimy, dimx = shape[0], shape[1]
-		assert crop_size<dimx and crop_size<dimy
-		randy = self.rng.randint(0, dimy-DIMY+1)
-		randx = self.rng.randint(0, dimx-DIMX+1)
-		image = image[randy:randy+DIMY,randx:randx+DIMX,...]
+		assert size<dimx and size<dimy
+		randy = self.rng.randint(0, dimy-size+1)
+		randx = self.rng.randint(0, dimx-size+1)
+		image = image[randy:randy+size,randx:randx+size,...]
 		return image
 	def random_flip(self, image, seed=None):
 		assert ((image.ndim == 2) | (image.ndim == 3))
