@@ -21,6 +21,11 @@ import skimage.io
 import skimage.color
 import skimage.transform
 
+skimage.io.use_plugin('matplotlib')
+from PIL import ImageFile
+
+ImageFile.LOAD_TRUNCATED_IMAGES = True
+
 import tensorflow as tf
 ###################################################################################################
 from tensorpack import *
@@ -35,11 +40,11 @@ from tensorpack.utils import logger
 ###################################################################################################
 np.warnings.filterwarnings('ignore')
 
-DIMX  = 512
-DIMY  = 512
-SIZE  = 512
+DIMX  = 256
+DIMY  = 256
+SIZE  = 256 # For resize
 
-EPOCH_SIZE = 1000
+EPOCH_SIZE = 2000
 BATCH_SIZE = 20
 ###################################################################################################
 class Model(ModelDesc):
@@ -180,13 +185,12 @@ class ImageDataFlow(RNGDataFlow):
 			rand_style = np.random.randint(0, len(styles))
 
 			if self.isTrain:
-				# image = skimage.io.imread(images[rand_image])				
-				style = skimage.io.imread(styles[rand_style])	
-				if style.ndim == 2:
-					style = skimage.color.gray2rgb(style)			
+				# image = skimage.io.imread(images[rand_image])		
+				style = cv2.imread(styles[rand_style], cv2.IMREAD_COLOR)
 				
 				style = self.central_crop(style)
-				style = self.resize_image(style)
+				style = self.resize_image(style, size=512)
+				style = self.random_crop (style, size=256)
 				# print(style.shape)
 				# logger.auto_set_dir()
 				# logger.info('Style image {} with shape {}'.format(styles[rand_style], style.shape))
@@ -199,7 +203,8 @@ class ImageDataFlow(RNGDataFlow):
 				   ]
 
 	def central_crop(self, image):
-		dimy, dimx, _ = image.shape
+		shape = image.shape
+		dimy, dimx = shape[0], shape[1]
 		shorter = min(dimy, dimx)
 		y_pad, x_pad = (dimy - shorter) // 2, (dimx - shorter) // 2
 		image = image[y_pad:y_pad+shorter, 
@@ -207,7 +212,8 @@ class ImageDataFlow(RNGDataFlow):
 		return image
 
 	def resize_image(self, image, size=SIZE): # Scale to 512
-		dimy, dimx, _ = image.shape
+		shape = image.shape
+		dimy, dimx = shape[0], shape[1]
 		from scipy.misc import imresize
 		if dimy > dimx:
 			image = imresize(image, (dimy*size//dimx, size), interp='bilinear')
@@ -215,6 +221,14 @@ class ImageDataFlow(RNGDataFlow):
 			image = imresize(image, (size, dimx*size//dimy), interp='bilinear')
 		return image
 
+	def random_crop(image, crop_size):
+		shape = image.shape
+		dimy, dimx = shape[0], shape[1]
+		assert crop_size<dimx and crop_size<dimy
+		randy = self.rng.randint(0, dimy-DIMY+1)
+		randx = self.rng.randint(0, dimx-DIMX+1)
+		image = image[randy:randy+DIMY,randx:randx+DIMX,...]
+		return image
 	def random_flip(self, image, seed=None):
 		assert ((image.ndim == 2) | (image.ndim == 3))
 		if seed:
@@ -257,7 +271,7 @@ def get_data(image_path, style_path, size=EPOCH_SIZE):
 	ds_train = BatchData(ds_train, BATCH_SIZE)
 	ds_valid = BatchData(ds_valid, BATCH_SIZE)
 
-	# ds_train = PrefetchDataZMQ(ds_train, 8)
+	ds_train = PrefetchDataZMQ(ds_train, 2)
 	return ds_train, ds_valid
 
 ###################################################################################################
