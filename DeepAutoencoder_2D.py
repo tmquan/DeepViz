@@ -64,7 +64,7 @@ class Model(ModelDesc):
 		sImg2d = rgbImg - VGG_MEAN_TENSOR
 		
 
-		with tf.variable_scope('VGG19_Encoder'):
+		with tf.variable_scope('VGG19'):
 			# VGG 19
 			with varreplace.freeze_variables():
 				with argscope(Conv2D, kernel_shape=3, nl=tf.nn.relu):
@@ -91,7 +91,7 @@ class Model(ModelDesc):
 					pool5 = MaxPooling('pool5', conv5_4, 2)  # 4
 
 					feats = pool5 # Take the feature map
-		with tf.variable_scope('VGG19_Decoder'):
+		with tf.variable_scope('Decoder'):
 			# with varreplace.freeze_variables():
 				with argscope([Conv2D, Deconv2D], kernel_shape=3, nl=tf.nn.relu):
 					
@@ -117,33 +117,6 @@ class Model(ModelDesc):
 					conv1_1 = Conv2D('conv1_1', conv1_2, 64)
 
 					dImg2d =  Conv2D('conv0_1', conv1_1, 3) # destination
-
-
-		with tf.variable_scope('VGG19'): # Another VGG
-			# VGG 19
-			with varreplace.freeze_variables():
-				with argscope(Conv2D, kernel_shape=3, nl=tf.nn.relu):
-					conv1_1 = Conv2D('conv1_1', sImg2d,  64)
-					conv1_2 = Conv2D('conv1_2', conv1_1, 64)
-					pool1 = MaxPooling('pool1', conv1_2, 2)  # 64
-					conv2_1 = Conv2D('conv2_1', pool1,   128)
-					conv2_2 = Conv2D('conv2_2', conv2_1, 128)
-					pool2 = MaxPooling('pool2', conv2_2, 2)  # 32
-					conv3_1 = Conv2D('conv3_1', pool2,   256)
-					conv3_2 = Conv2D('conv3_2', conv3_1, 256)
-					conv3_3 = Conv2D('conv3_3', conv3_2, 256)
-					conv3_4 = Conv2D('conv3_4', conv3_3, 256)
-					pool3 = MaxPooling('pool3', conv3_4, 2)  # 16
-					conv4_1 = Conv2D('conv4_1', pool3,   512)
-					conv4_2 = Conv2D('conv4_2', conv4_1, 512)
-					conv4_3 = Conv2D('conv4_3', conv4_2, 512)
-					conv4_4 = Conv2D('conv4_4', conv4_3, 512)
-					pool4 = MaxPooling('pool4', conv4_4, 2)  # 8
-					conv5_1 = Conv2D('conv5_1', pool4,   512)
-					conv5_2 = Conv2D('conv5_2', conv5_1, 512)
-					conv5_3 = Conv2D('conv5_3', conv5_2, 512)
-					conv5_4 = Conv2D('conv5_4', conv5_3, 512)
-					pool5 = MaxPooling('pool5', conv5_4, 2)  # 4
 
 		# Reconstruct img
 		recImg = dImg2d + VGG_MEAN_TENSOR
@@ -335,18 +308,9 @@ if __name__ == '__main__':
 			session_init = SaverRestore(args.load)
 		else: # For training from scratch, read the vgg model from args.vgg19
 			assert os.path.isfile(args.vgg19)
-			# param_dict = dict(np.load(args.vgg19))
-			# param_dict = {'VGG19/' + name: value for name, value in six.iteritems(param_dict)} 
-			param_dict = {}
-			param_dict.update({'VGG19/' + name: value for name, value in six.iteritems( dict(np.load(args.vgg19) ))})
-			param_dict.update({'VGG19_Encoder/' + name: value for name, value in six.iteritems( dict(np.load(args.vgg19) ))})
-			# print(param_dict)
+			param_dict = dict(np.load(args.vgg19))
+			param_dict = {'VGG19/' + name: value for name, value in six.iteritems(param_dict)}
 			session_init = DictRestore(param_dict)
-
-			# param_dict = dict(np.load(args.vgg19))
-			# param_dict = {'VGG19_Encoder/' + name: value for name, value in six.iteritems(param_dict)}
-			# session_init = DictRestore(param_dict)
-
 
 		
 		# Set up configuration
