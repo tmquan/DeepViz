@@ -186,20 +186,21 @@ class Model(ModelDesc):
 							# conv4_3 = Conv2D('conv4_3', conv4_4, 512)
 							# conv4_2 = Conv2D('conv4_2', conv4_3, 512)
 							# conv4_1 = Conv2D('conv4_1', conv4_2, 512)
-							pool3 = Subpix2D('pool3',   source,  256)  # 16
+							pool3 = Deconv2D('pool3',   source,  256)  # 16
 							conv3_4 = Conv2D('conv3_4', pool3,   256)
 							conv3_3 = Conv2D('conv3_3', conv3_4, 256)
 							conv3_2 = Conv2D('conv3_2', conv3_3, 256)
 							conv3_1 = Conv2D('conv3_1', conv3_2, 256)
-							pool2 = Subpix2D('pool2',   conv3_1, 128)  # 32
+							pool2 = Deconv2D('pool2',   conv3_1, 128)  # 32
 							conv2_2 = Conv2D('conv2_2', pool2, 	 128)
 							conv2_1 = Conv2D('conv2_1', conv2_2, 128)
-							pool1 = Subpix2D('pool1',   conv2_1, 64)  # 64
+							pool1 = Deconv2D('pool1',   conv2_1, 64)  # 64
 							conv1_2 = Conv2D('conv1_2', pool1, 	 64)
 							conv1_1 = Conv2D('conv1_1', conv1_2, 64)
 							conv1_0 = Conv2D('conv1_0', conv1_1, 3, nl=tf.tanh)
-							conv1_0 = tf_2imag(conv1_0, maxVal=255.0)
-							conv1_0 = conv1_0 - VGG19_MEAN_TENSOR
+							conv1_0 = tf_2tanh(conv1_0, maxVal=255.0)
+							# conv1_0 = tf_2imag(conv1_0, maxVal=255.0)
+							# conv1_0 = conv1_0 - VGG19_MEAN_TENSOR
 							return conv1_0 # List of feature maps
 
 		@auto_reuse_variable_scope				
@@ -443,7 +444,7 @@ if __name__ == '__main__':
 	parser.add_argument('--lambda',     help='Between 0 and 1',    default=1e-0, type=float)
 	parser.add_argument('--weight_c',   help='Between 0 and 1',    default=1e-0, type=float)
 	parser.add_argument('--weight_s',   help='Between 0 and 1',    default=1e-2, type=float)
-	parser.add_argument('--weight_tv',  help='Between 0 and 1',    default=0e-5, type=float)
+	parser.add_argument('--weight_tv',  help='Between 0 and 1',    default=1e-5, type=float)
 	parser.add_argument('--render', 	action='store_true')
 	
 	global args
