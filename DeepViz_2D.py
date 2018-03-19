@@ -176,8 +176,8 @@ class Model(ModelDesc):
 		def vgg19_decoder(source, name='VGG19_Decoder'):
 			with tf.variable_scope(name):
 				# with varreplace.freeze_variables():
-					with argscope([Conv2D], kernel_shape=3, nl=tf.nn.elu):	
-						with argscope([Deconv2D], kernel_shape=3, strides=(2,2), nl=tf.nn.elu):
+					with argscope([Conv2D], kernel_shape=3, nl=tf.nn.leaky_relu):	
+						with argscope([Deconv2D], kernel_shape=3, strides=(2,2), nl=tf.nn.leaky_relu):
 							# conv5_4 = Conv2D('conv5_4', input,   512)
 							# conv5_3 = Conv2D('conv5_3', conv5_4, 512)
 							# conv5_2 = Conv2D('conv5_2', conv5_3, 512)
