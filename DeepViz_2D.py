@@ -62,6 +62,11 @@ def np_2tanh(x, maxVal = 255.0, name='ToRangeTanh'):
 ###############################################################################
 def np_2imag(x, maxVal = 255.0, name='ToRangeImag'):
 	return (x / 2.0 + 0.5) * maxVal
+
+def normalize(v):
+    assert isinstance(v, tf.Tensor)
+    v.get_shape().assert_has_rank(4)
+    return v / tf.reduce_mean(v, axis=[1, 2, 3], keepdims=True)
 ###################################################################################################
 def INReLU(x, name=None):
 	x = InstanceNorm('inorm', x)
@@ -139,11 +144,11 @@ class Model(ModelDesc):
 		style = style - VGG19_MEAN_TENSOR
 		
 		@auto_reuse_variable_scope
-		def vgg19_encoder(input, name='VGG19_Encoder'):
+		def vgg19_encoder(source, name='VGG19_Encoder'):
 			with tf.variable_scope(name):
 				with varreplace.freeze_variables():
 					with argscope([Conv2D], kernel_shape=3, nl=tf.nn.relu):
-						conv1_1 = Conv2D('conv1_1', input,   64)
+						conv1_1 = Conv2D('conv1_1', source,  64)
 						conv1_2 = Conv2D('conv1_2', conv1_1, 64)
 						pool1 = MaxPooling('pool1', conv1_2, 2)  # 64
 						conv2_1 = Conv2D('conv2_1', pool1,   128)
@@ -164,10 +169,10 @@ class Model(ModelDesc):
 						conv5_3 = Conv2D('conv5_3', conv5_2, 512)
 						conv5_4 = Conv2D('conv5_4', conv5_3, 512)
 						pool5 = MaxPooling('pool5', conv5_4, 2)  # 4
-						return conv4_1, [conv1_1, conv2_1, conv3_1, conv4_1] # List of returned feature maps
+						return conv4_1, [conv1_1, conv2_1, conv3_1, conv4_1]
 
 		@auto_reuse_variable_scope
-		def vgg19_decoder(input, name='VGG19_Decoder'):
+		def vgg19_decoder(source, name='VGG19_Decoder'):
 			with tf.variable_scope(name):
 				# with varreplace.freeze_variables():
 					with argscope([Conv2D], kernel_shape=3, nl=INReLU):	
@@ -181,7 +186,7 @@ class Model(ModelDesc):
 							# conv4_3 = Conv2D('conv4_3', conv4_4, 512)
 							# conv4_2 = Conv2D('conv4_2', conv4_3, 512)
 							# conv4_1 = Conv2D('conv4_1', conv4_2, 512)
-							pool3 = Subpix2D('pool3',   input,   256)  # 16
+							pool3 = Subpix2D('pool3',   source,  256)  # 16
 							conv3_4 = Conv2D('conv3_4', pool3,   256)
 							conv3_3 = Conv2D('conv3_3', conv3_4, 256)
 							conv3_2 = Conv2D('conv3_2', conv3_3, 256)
@@ -192,15 +197,17 @@ class Model(ModelDesc):
 							pool1 = Subpix2D('pool1',   conv2_1, 64)  # 64
 							conv1_2 = Conv2D('conv1_2', pool1, 	 64)
 							conv1_1 = Conv2D('conv1_1', conv1_2, 64)
-							conv1_0 = Conv2D('conv1_0', conv1_1, 3)
+							conv1_0 = Conv2D('conv1_0', conv1_1, 3, nl=tf.tanh)
+							conv1_0 = tf_2imag(conv1_0, maxVal=255.0)
+							conv1_0 = conv1_0 - VGG19_MEAN_TENSOR
 							return conv1_0 # List of feature maps
 
 		@auto_reuse_variable_scope				
-		def vgg19_feature(input, name='VGG19_Feature'):
+		def vgg19_feature(source, name='VGG19_Feature'):
 			with tf.variable_scope(name):
 				with varreplace.freeze_variables():
 					with argscope([Conv2D], kernel_shape=3, nl=tf.nn.relu):
-						conv1_1 = Conv2D('conv1_1', input,   64)
+						conv1_1 = Conv2D('conv1_1', source,  64)
 						conv1_2 = Conv2D('conv1_2', conv1_1, 64)
 						pool1 = MaxPooling('pool1', conv1_2, 2)  # 64
 						conv2_1 = Conv2D('conv2_1', pool1,   128)
@@ -221,7 +228,10 @@ class Model(ModelDesc):
 						conv5_3 = Conv2D('conv5_3', conv5_2, 512)
 						conv5_4 = Conv2D('conv5_4', conv5_3, 512)
 						pool5 = MaxPooling('pool5', conv5_4, 2)  # 4
-						return conv4_1, [conv1_1, conv2_1, conv3_1, conv4_1] # List of returned feature maps
+						return conv4_1, [conv1_1, conv2_1, conv3_1, conv4_1]
+						# return normalize(conv4_1), 
+						# 	   [normalize(conv1_1), normalize(conv2_1), normalize(conv3_1), normalize(conv4_1)] # List of returned feature maps
+
 
 		# Step 1: Run thru the encoder
 		image_encoded, image_feature = vgg19_encoder(image)
@@ -429,11 +439,11 @@ if __name__ == '__main__':
 	parser.add_argument('--vgg19', 		help='load model', 		   default='data/model/vgg19_weights_normalized.h5') #vgg19.npz')
 	parser.add_argument('--image_path', help='path to the image.', default='data/train/image/') 
 	parser.add_argument('--style_path', help='path to the style.', default='data/train/style/') 
-	parser.add_argument('--alpha',      help='Between 0 and 1',    default=1.0, type=float)
+	parser.add_argument('--alpha',      help='Between 0 and 1',    default=1.0,  type=float)
 	parser.add_argument('--lambda',     help='Between 0 and 1',    default=1e-0, type=float)
 	parser.add_argument('--weight_c',   help='Between 0 and 1',    default=1e-0, type=float)
 	parser.add_argument('--weight_s',   help='Between 0 and 1',    default=1e-2, type=float)
-	parser.add_argument('--weight_tv',  help='Between 0 and 1',    default=0e-5,  type=float)
+	parser.add_argument('--weight_tv',  help='Between 0 and 1',    default=0e-5, type=float)
 	parser.add_argument('--render', 	action='store_true')
 	
 	global args
@@ -484,7 +494,7 @@ if __name__ == '__main__':
 			callbacks       =   [
 				PeriodicTrigger(ModelSaver(), every_k_epochs=50),
 				# PeriodicTrigger(VisualizeRunner(valid_ds), every_k_epochs=5),
-				ScheduledHyperParamSetter('learning_rate', [(0, 2e-5), (100, 1e-5), (200, 2e-6), (300, 1e-6)], interp='linear')
+				ScheduledHyperParamSetter('learning_rate', [(0, 2e-4), (100, 1e-4), (200, 1e-5), (300, 1e-6)], interp='linear')
 				#ScheduledHyperParamSetter('learning_rate', [(30, 6e-6), (45, 1e-6), (60, 8e-7)]),
 				#HumanHyperParamSetter('learning_rate'),
 				],
