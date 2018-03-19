@@ -6,7 +6,7 @@ from __future__ import division
 from __future__ import print_function
 
 
-import os, sys, argparse, glob, cv2, six
+import os, sys, argparse, glob, cv2, six, h5py
 
 
 
@@ -45,7 +45,23 @@ DIMY  = 256
 SIZE  = 256 # For resize
 
 EPOCH_SIZE = 2000
-BATCH_SIZE = 2
+BATCH_SIZE = 10
+###############################################################################
+# Utility function for scaling 
+def tf_2tanh(x, maxVal = 255.0, name='ToRangeTanh'):
+	with tf.variable_scope(name):
+		return (x / maxVal - 0.5) * 2.0
+###############################################################################
+def tf_2imag(x, maxVal = 255.0, name='ToRangeImag'):
+	with tf.variable_scope(name):
+		return (x / 2.0 + 0.5) * maxVal
+
+# Utility function for scaling 
+def np_2tanh(x, maxVal = 255.0, name='ToRangeTanh'):
+	return (x / maxVal - 0.5) * 2.0
+###############################################################################
+def np_2imag(x, maxVal = 255.0, name='ToRangeImag'):
+	return (x / 2.0 + 0.5) * maxVal
 ###################################################################################################
 def INReLU(x, name=None):
 	x = InstanceNorm('inorm', x)
@@ -59,14 +75,11 @@ def INLReLU(x, name=None):
 def BNLReLU(x, name=None):
 	x = BatchNorm('bn', x)
 	return tf.nn.leaky_relu(x, name=name)
-	
+
 @layer_register(log_shape=True)
 def Subpix2D(inputs, chan, scale=2, stride=1):
-	with argscope([Conv2D], nl=INLReLU, stride=stride, kernel_shape=3):
+	with argscope([Conv2D], nl=INReLU, stride=stride, kernel_shape=3):
 		results = Conv2D('conv0', inputs, chan* scale**2, padding='SAME')
-		old_shape = inputs.get_shape().as_list()
-		# results = tf.reshape(results, [-1, chan, old_shape[2]*scale, old_shape[3]*scale])
-		# results = tf.reshape(results, [-1, old_shape[1]*scale, old_shape[2]*scale, chan])
 		if scale>1:
 			results = tf.depth_to_space(results, scale, name='depth2space', data_format='NHWC')
 		return results
@@ -78,12 +91,10 @@ class Model(ModelDesc):
 			InputDesc(tf.float32, (BATCH_SIZE, DIMY, DIMX, 3), 'style'),
 			]
 			
-	def _build_adain_layers(self, content, style, eps=1e-5, data_format='channels_last', name='adain'):
+	def _build_adain_layers(self, content, style, eps=1e-6, name='adain'):
 		with tf.variable_scope(name):
-			axes = [2,3] if data_format == 'channels_first' else [1,2]
-
-			c_mean, c_var = tf.nn.moments(content, axes=axes, keep_dims=True)
-			s_mean, s_var = tf.nn.moments(style, axes=axes, keep_dims=True)
+			c_mean, c_var = tf.nn.moments(content, axes=[1,2], keep_dims=True)
+			s_mean, s_var = tf.nn.moments(style, axes=[1,2], keep_dims=True)
 			c_std, s_std = tf.sqrt(c_var + eps), tf.sqrt(s_var + eps)
 
 			return s_std * (content - c_mean) / c_std + s_mean
@@ -97,7 +108,7 @@ class Model(ModelDesc):
 		# for layer in current_layers:
 		for current, target in zip(current_layers, target_layers):
 			# current, target = current_layers[layer], target_layers[layer]
-
+			axes = [1,2]
 			current_mean, current_var = tf.nn.moments(current, axes=[1,2], keep_dims=True) # Normalize to 2,3 is for NCHW; 1,2 is for NHWC
 			current_std = tf.sqrt(current_var + eps)
 
@@ -105,7 +116,7 @@ class Model(ModelDesc):
 			target_std = tf.sqrt(target_var + eps)
 
 			mean_loss = tf.reduce_sum(tf.squared_difference(current_mean, target_mean))
-			std_loss = tf.reduce_sum(tf.squared_difference(current_std, target_std))
+			std_loss  = tf.reduce_sum(tf.squared_difference(current_std, target_std))
 
 			# normalize w.r.t batch size
 			n = tf.cast(tf.shape(current)[0], dtype=tf.float32)
@@ -159,8 +170,8 @@ class Model(ModelDesc):
 		def vgg19_decoder(input, name='VGG19_Decoder'):
 			with tf.variable_scope(name):
 				# with varreplace.freeze_variables():
-					with argscope([Conv2D], kernel_shape=3, nl=tf.nn.relu):	
-						with argscope([Deconv2D], kernel_shape=3, strides=(2,2), nl=tf.nn.relu):
+					with argscope([Conv2D], kernel_shape=3, nl=INReLU):	
+						with argscope([Deconv2D], kernel_shape=3, strides=(2,2), nl=INReLU):
 							# conv5_4 = Conv2D('conv5_4', input,   512)
 							# conv5_3 = Conv2D('conv5_3', conv5_4, 512)
 							# conv5_2 = Conv2D('conv5_2', conv5_3, 512)
@@ -259,7 +270,7 @@ class Model(ModelDesc):
 		# Reconstruct img
 		image = image + VGG19_MEAN_TENSOR
 		style = style + VGG19_MEAN_TENSOR
-		paint = paint + VGG19_MEAN_TENSOR
+		paint = tf.identity(paint + VGG19_MEAN_TENSOR, name='paint')
 		# Build loss in here
 		
 
@@ -269,7 +280,7 @@ class Model(ModelDesc):
 		tf.summary.image('colorized', viz, max_outputs=50)
 
 	def _get_optimizer(self):
-		lr  = tf.get_variable('learning_rate', initializer=2e-4, trainable=False)
+		lr  = tf.get_variable('learning_rate', initializer=2e-5, trainable=False)
 		opt = tf.train.AdamOptimizer(lr)
 		return opt
 ####################################################################################################
@@ -415,14 +426,14 @@ if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
 	parser.add_argument('--gpu', 		help='comma separated list of GPU(s) to use.')
 	parser.add_argument('--load', 		help='load model')
-	parser.add_argument('--vgg19', 		help='load model', 		   default='data/model/vgg19.npz')
+	parser.add_argument('--vgg19', 		help='load model', 		   default='data/model/vgg19_weights_normalized.h5') #vgg19.npz')
 	parser.add_argument('--image_path', help='path to the image.', default='data/train/image/') 
 	parser.add_argument('--style_path', help='path to the style.', default='data/train/style/') 
 	parser.add_argument('--alpha',      help='Between 0 and 1',    default=1.0, type=float)
 	parser.add_argument('--lambda',     help='Between 0 and 1',    default=1e-0, type=float)
 	parser.add_argument('--weight_c',   help='Between 0 and 1',    default=1e-0, type=float)
 	parser.add_argument('--weight_s',   help='Between 0 and 1',    default=1e-2, type=float)
-	parser.add_argument('--weight_tv',  help='Between 0 and 1',    default=1e-5,  type=float)
+	parser.add_argument('--weight_tv',  help='Between 0 and 1',    default=0e-5,  type=float)
 	parser.add_argument('--render', 	action='store_true')
 	
 	global args
@@ -449,15 +460,24 @@ if __name__ == '__main__':
 			assert os.path.isfile(args.vgg19)
 			# param_dict = dict(np.load(args.vgg19))
 			# param_dict = {'VGG19/' + name: value for name, value in six.iteritems(param_dict)} 
+			
+			h5file = h5py.File(args.vgg19, 'r')
+			print(h5file)
+			print(h5file.keys())
+			
+			
 			param_dict = {}
-			param_dict.update({'VGG19_Encoder/' + name: value for name, value in six.iteritems( dict(np.load(args.vgg19) ))})
-			param_dict.update({'VGG19_Feature/' + name: value for name, value in six.iteritems( dict(np.load(args.vgg19) ))})
+			param_dict.update({'VGG19_Encoder/' + name: value for name, value in six.iteritems( h5file)})
+			param_dict.update({'VGG19_Feature/' + name: value for name, value in six.iteritems( h5file)})
+			h5file.close()
+
+			# weight = np.load(args.vgg19)
+			# param_dict = {}
+			# param_dict.update({'VGG19_Encoder/' + name: value for name, value in six.iteritems( dict(weight))})
+			# param_dict.update({'VGG19_Feature/' + name: value for name, value in six.iteritems( dict(weight))})
 			# print(param_dict)
 			session_init = DictRestore(param_dict)
 
-			# param_dict = dict(np.load(args.vgg19))
-			# param_dict = {'VGG19_Encoder/' + name: value for name, value in six.iteritems(param_dict)}
-			# session_init = DictRestore(param_dict)
 
 
 		
@@ -468,7 +488,7 @@ if __name__ == '__main__':
 			callbacks       =   [
 				PeriodicTrigger(ModelSaver(), every_k_epochs=50),
 				# PeriodicTrigger(VisualizeRunner(valid_ds), every_k_epochs=5),
-				ScheduledHyperParamSetter('learning_rate', [(0, 2e-4), (100, 1e-4), (200, 1e-5), (300, 1e-6)], interp='linear')
+				ScheduledHyperParamSetter('learning_rate', [(0, 2e-5), (100, 1e-5), (200, 2e-6), (300, 1e-6)], interp='linear')
 				#ScheduledHyperParamSetter('learning_rate', [(30, 6e-6), (45, 1e-6), (60, 8e-7)]),
 				#HumanHyperParamSetter('learning_rate'),
 				],
