@@ -44,8 +44,32 @@ DIMX  = 256
 DIMY  = 256
 SIZE  = 256 # For resize
 
-EPOCH_SIZE = 100
-BATCH_SIZE = 1
+EPOCH_SIZE = 2000
+BATCH_SIZE = 2
+###################################################################################################
+def INReLU(x, name=None):
+	x = InstanceNorm('inorm', x)
+	return tf.nn.relu(x, name=name)
+
+
+def INLReLU(x, name=None):
+	x = InstanceNorm('inorm', x)
+	return tf.nn.leaky_relu(x, name=name)
+	
+def BNLReLU(x, name=None):
+	x = BatchNorm('bn', x)
+	return tf.nn.leaky_relu(x, name=name)
+	
+@layer_register(log_shape=True)
+def Subpix2D(inputs, chan, scale=2, stride=1):
+	with argscope([Conv2D], nl=INLReLU, stride=stride, kernel_shape=3):
+		results = Conv2D('conv0', inputs, chan* scale**2, padding='SAME')
+		old_shape = inputs.get_shape().as_list()
+		# results = tf.reshape(results, [-1, chan, old_shape[2]*scale, old_shape[3]*scale])
+		# results = tf.reshape(results, [-1, old_shape[1]*scale, old_shape[2]*scale, chan])
+		if scale>1:
+			results = tf.depth_to_space(results, scale, name='depth2space', data_format='NHWC')
+		return results
 ###################################################################################################
 class Model(ModelDesc):
 	def _get_inputs(self):
@@ -146,15 +170,15 @@ class Model(ModelDesc):
 							# conv4_3 = Conv2D('conv4_3', conv4_4, 512)
 							# conv4_2 = Conv2D('conv4_2', conv4_3, 512)
 							# conv4_1 = Conv2D('conv4_1', conv4_2, 512)
-							pool3 = Deconv2D('pool3',   input,   256)  # 16
+							pool3 = Subpix2D('pool3',   input,   256)  # 16
 							conv3_4 = Conv2D('conv3_4', pool3,   256)
 							conv3_3 = Conv2D('conv3_3', conv3_4, 256)
 							conv3_2 = Conv2D('conv3_2', conv3_3, 256)
 							conv3_1 = Conv2D('conv3_1', conv3_2, 256)
-							pool2 = Deconv2D('pool2',   conv3_1, 128)  # 32
+							pool2 = Subpix2D('pool2',   conv3_1, 128)  # 32
 							conv2_2 = Conv2D('conv2_2', pool2, 	 128)
 							conv2_1 = Conv2D('conv2_1', conv2_2, 128)
-							pool1 = Deconv2D('pool1',   conv2_1, 64)  # 64
+							pool1 = Subpix2D('pool1',   conv2_1, 64)  # 64
 							conv1_2 = Conv2D('conv1_2', pool1, 	 64)
 							conv1_1 = Conv2D('conv1_1', conv1_2, 64)
 							conv1_0 = Conv2D('conv1_0', conv1_1, 3)
@@ -398,7 +422,7 @@ if __name__ == '__main__':
 	parser.add_argument('--lambda',     help='Between 0 and 1',    default=1e-0, type=float)
 	parser.add_argument('--weight_c',   help='Between 0 and 1',    default=1e-0, type=float)
 	parser.add_argument('--weight_s',   help='Between 0 and 1',    default=1e-2, type=float)
-	parser.add_argument('--weight_tv',  help='Between 0 and 1',    default=0.0,  type=float)
+	parser.add_argument('--weight_tv',  help='Between 0 and 1',    default=1e-5,  type=float)
 	parser.add_argument('--render', 	action='store_true')
 	
 	global args
