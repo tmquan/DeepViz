@@ -36,7 +36,7 @@ from tensorpack.tfutils import optimizer, gradproc
 from tensorpack.tfutils.summary import add_moving_summary, add_param_summary, add_tensor_summary
 from tensorpack.tfutils.scope_utils import auto_reuse_variable_scope
 from tensorpack.utils import logger
-
+Reduction = tf.losses.Reduction
 ###################################################################################################
 np.warnings.filterwarnings('ignore')
 
@@ -67,6 +67,14 @@ def normalize(v):
     assert isinstance(v, tf.Tensor)
     v.get_shape().assert_has_rank(4)
     return v / tf.reduce_mean(v, axis=[1, 2, 3], keepdims=True)
+
+def gram_matrix(v):
+	assert isinstance(v, tf.Tensor)
+	v.get_shape().assert_has_rank(4)
+	dim = v.get_shape().as_list()
+	v = tf.reshape(v, [-1, dim[1] * dim[2], dim[3]])
+	return tf.matmul(v, v, transpose_a=True)
+
 ###################################################################################################
 def INReLU(x, name=None):
 	x = InstanceNorm('inorm', x)
@@ -96,18 +104,18 @@ class Model(ModelDesc):
 			InputDesc(tf.float32, (BATCH_SIZE, DIMY, DIMX, 3), 'style'),
 			]
 			
-	def _build_adain_layers(self, content, style, eps=1e-6, name='adain', is_normalized=True):
+	def _build_adain_layers(self, content, style, eps=1e-5, name='adain', is_normalized=False):
 		with tf.variable_scope(name):
 			if is_normalized:
-				content = normalize(content)
-				style   = normalize(style)
+				content = InstanceNorm('c_norm', content)
+				style   = InstanceNorm('s_norm', style)
 			c_mean, c_var = tf.nn.moments(content, axes=[1,2], keep_dims=True)
 			s_mean, s_var = tf.nn.moments(style,   axes=[1,2], keep_dims=True)
 			c_std, s_std  = tf.sqrt(c_var + eps), tf.sqrt(s_var + eps)
 
 			results = (s_std * (content - c_mean) / c_std + s_mean)
 			if is_normalized:
-				results = normalize(results)
+				results = InstanceNorm('r_norm', results)
 			return results
 
 	def _build_content_loss(self, current, target, weight=1.0, is_normalized=False):
@@ -142,8 +150,61 @@ class Model(ModelDesc):
 			# losses[layer] = (mean_loss + std_loss) * weight
 			losses.append((mean_loss + std_loss) * weight)
 		return losses
+	def _build_perceptual_loss(self, current_layers, target_layers, weight=1.0, eps=1e-6, is_normalized=False):
+		# perceptual loss
+		with tf.name_scope('perceptual_loss'):
+			losses = []
+			for current, target in zip(current_layers, target_layers):
+				if is_normalized:
+					current = normalize(current)
+					target  = normalize(target)
+				losses.append(tf.losses.mean_squared_error(current, target, reduction=Reduction.MEAN))
+			return losses
+			# pool2 = normalize(pool2)
+			# pool5 = normalize(pool5)
+			# phi_a_1, phi_b_1 = tf.split(pool2, 2, axis=0)
+			# phi_a_2, phi_b_2 = tf.split(pool5, 2, axis=0)
 
+			# logger.info('Create perceptual loss for layer {} with shape {}'.format(pool2.name, pool2.get_shape()))
+			# pool2_loss = tf.losses.mean_squared_error(phi_a_1, phi_b_1, reduction=Reduction.MEAN)
+			# logger.info('Create perceptual loss for layer {} with shape {}'.format(pool5.name, pool5.get_shape()))
+			# pool5_loss = tf.losses.mean_squared_error(phi_a_2, phi_b_2, reduction=Reduction.MEAN)
 
+	def _build_texture_losses(self, current_layers, target_layers, weight=1.0, eps=1e-6, is_normalized=False):
+		# texture loss
+		with tf.name_scope('texture_loss'):
+			def texture_loss(current, target, p=16):
+				x = tf.concat([current, target], axis=0)
+				_, h, w, c = x.get_shape().as_list()
+				if is_normalized:
+					x = normalize(x)
+				assert h % p == 0 and w % p == 0
+				logger.info('Create texture loss for layer {} with shape {}'.format(x.name, x.get_shape()))
+
+				x = tf.space_to_batch_nd(x, [p, p], [[0, 0], [0, 0]])  # [b * ?, h/p, w/p, c]
+				x = tf.reshape(x, [p, p, -1, h // p, w // p, c])       # [p, p, b, h/p, w/p, c]
+				x = tf.transpose(x, [2, 3, 4, 0, 1, 5])                # [b * ?, p, p, c]
+				patches_a, patches_b = tf.split(x, 2, axis=0)          # each is b,h/p,w/p,p,p,c
+
+				patches_a = tf.reshape(patches_a, [-1, p, p, c])       # [b * ?, p, p, c]
+				patches_b = tf.reshape(patches_b, [-1, p, p, c])       # [b * ?, p, p, c]
+				return tf.losses.mean_squared_error(
+				    gram_matrix(patches_a),
+				    gram_matrix(patches_b),
+				    reduction=Reduction.MEAN
+				)
+			losses = []
+			for current, target in zip(current_layers, target_layers):
+				if is_normalized:
+					current = normalize(current)
+					target  = normalize(target)
+				losses.append(texture_loss(current, target))
+			return losses
+		# texture_loss_conv1_1 = tf.identity(texture_loss(conv1_1), name='normalized_conv1_1')
+		# texture_loss_conv2_1 = tf.identity(texture_loss(conv2_1), name='normalized_conv2_1')
+		# texture_loss_conv3_1 = tf.identity(texture_loss(conv3_1), name='normalized_conv3_1')
+
+  #           return [pool2_loss, pool5_loss, texture_loss_conv1_1, texture_loss_conv2_1, texture_loss_conv3_1]
 	def _build_graph(self, inputs):
 		# sImg2d # sImg the projection 2D, reshape from 
 		VGG19_MEAN = np.array([123.68, 116.779, 103.939])  # RGB
@@ -197,18 +258,19 @@ class Model(ModelDesc):
 							# conv4_3 = Conv2D('conv4_3', conv4_4, 512)
 							# conv4_2 = Conv2D('conv4_2', conv4_3, 512)
 							# conv4_1 = Conv2D('conv4_1', conv4_2, 512)
-							pool3 = Deconv2D('pool3',   source,  256)  # 16
+							pool3 = Subpix2D('pool3',   source,  256)  # 16
 							conv3_4 = Conv2D('conv3_4', pool3,   256)
 							conv3_3 = Conv2D('conv3_3', conv3_4, 256)
 							conv3_2 = Conv2D('conv3_2', conv3_3, 256)
 							conv3_1 = Conv2D('conv3_1', conv3_2, 256)
-							pool2 = Deconv2D('pool2',   conv3_1, 128)  # 32
+							pool2 = Subpix2D('pool2',   conv3_1, 128)  # 32
 							conv2_2 = Conv2D('conv2_2', pool2, 	 128)
 							conv2_1 = Conv2D('conv2_1', conv2_2, 128)
-							pool1 = Deconv2D('pool1',   conv2_1, 64)  # 64
+							pool1 = Subpix2D('pool1',   conv2_1, 64)  # 64
 							conv1_2 = Conv2D('conv1_2', pool1, 	 64)
 							conv1_1 = Conv2D('conv1_1', conv1_2, 64)
 							conv1_0 = Conv2D('conv1_0', conv1_1, 3)
+							conv1_0 = 255.0*tf.nn.tanh(conv1_0)
 							conv1_0 = conv1_0 + VGG19_MEAN_TENSOR
 							# conv1_0 = 255.0*tf.nn.tanh(conv1_0)
 							# conv1_0 = tf_2tanh(conv1_0, maxVal=255.0)
@@ -252,7 +314,7 @@ class Model(ModelDesc):
 		style_encoded, style_feature = vgg19_encoder(style)
 
 		# Step 2: Run thru the adain block to get t=AdIN(f(c), f(s))
-		merge_encoded = self._build_adain_layers(image_encoded, style_encoded)
+		merge_encoded = self._build_adain_layers(image_encoded[-1], style_encoded[-1])
 
 		# Step 3: Run thru the decoder to get the paint image
 		paint = vgg19_decoder(merge_encoded)
@@ -271,12 +333,14 @@ class Model(ModelDesc):
 			losses = []
 			# Content loss between t and f(g(t))
 			content_loss = self._build_content_loss(merge_encoded, paint_encoded, weight=args.weight_c)
+			# content_loss = self._build_perceptual_loss(style_encoded, paint_encoded, weight=args.weight_c)
 			# add_moving_summary(content_loss)
 			add_tensor_summary(content_loss, types=['scalar'], name='content_loss')
 			losses.append(content_loss)
 
 			# Style losses between paint and style
 			style_losses = self._build_style_losses(paint_feature, style_feature, weight=args.weight_s)
+			# style_losses = self._build_texture_losses(paint_feature, style_feature, weight=args.weight_s)
 			for idx, style_loss in enumerate(style_losses):
 				add_tensor_summary(style_loss, types=['scalar'], name='style_loss')
 				losses.append(style_loss)
