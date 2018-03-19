@@ -93,30 +93,30 @@ class Model(ModelDesc):
 					feats = pool5 # Take the feature map
 		with tf.variable_scope('Decoder'):
 			# with varreplace.freeze_variables():
-				with argscope([Conv2D, Deconv2D], kernel_shape=3, nl=tf.nn.relu):
-					
+				with argscope([Conv2D, Deconv2D], kernel_shape=3, nl=tf.nn.relu):	
 					conv5_4 = Conv2D('conv5_4', feats,   512)
-					conv5_3 = Conv2D('conv5_3', conv5_2, 512)
-					conv5_2 = Conv2D('conv5_2', conv5_1, 512)
-					conv5_1 = Conv2D('conv5_1', pool4,   512)
-					pool4 = Deconv2D('pool4', conv4_4,   2)  # 8
-					conv4_4 = Conv2D('conv4_4', conv4_3, 512)
-					conv4_3 = Conv2D('conv4_3', conv4_2, 512)
-					conv4_2 = Conv2D('conv4_2', conv4_1, 512)
-					conv4_1 = Conv2D('conv4_1', pool3,   512)
-					pool3 = Deconv2D('pool3', conv3_4,   2)  # 16
-					conv3_4 = Conv2D('conv3_4', conv3_3, 256)
-					conv3_3 = Conv2D('conv3_3', conv3_2, 256)
-					conv3_2 = Conv2D('conv3_2', conv3_1, 256)
-					conv3_1 = Conv2D('conv3_1', pool2,   256)
-					pool2 = Deconv2D('pool2', conv2_2,   2)  # 32
-					conv2_2 = Conv2D('conv2_2', conv2_1, 128)
-					conv2_1 = Conv2D('conv2_1', pool1,   28)
-					pool1 = Deconv2D('pool1', conv1_2,   2)  # 64
-					conv1_2 = Conv2D('conv1_2', conv1_1, 64)
+					conv5_3 = Conv2D('conv5_3', conv5_4, 512)
+					conv5_2 = Conv2D('conv5_2', conv5_3, 512)
+					conv5_1 = Conv2D('conv5_1', conv5_2, 512)
+					pool4 = Deconv2D('pool4',   conv5_1, 2)  # 8
+					conv4_4 = Conv2D('conv4_4', pool4,   512)
+					conv4_3 = Conv2D('conv4_3', conv4_4, 512)
+					conv4_2 = Conv2D('conv4_2', conv4_3, 512)
+					conv4_1 = Conv2D('conv4_1', conv4_2, 512)
+					pool3 = Deconv2D('pool3',   conv4_1, 2)  # 16
+					conv3_4 = Conv2D('conv3_4', pool3,   256)
+					conv3_3 = Conv2D('conv3_3', conv3_4, 256)
+					conv3_2 = Conv2D('conv3_2', conv3_3, 256)
+					conv3_1 = Conv2D('conv3_1', conv3_2, 256)
+					pool2 = Deconv2D('pool2',   conv3_1, 2)  # 32
+					conv2_2 = Conv2D('conv2_2', pool2, 	 128)
+					conv2_1 = Conv2D('conv2_1', conv2_2, 128)
+					pool1 = Deconv2D('pool1',   conv2_1, 2)  # 64
+					conv1_2 = Conv2D('conv1_2', pool1, 	 64)
 					conv1_1 = Conv2D('conv1_1', conv1_2, 64)
+					conv1_0 = Conv2D('conv1_0', conv1_1, 3)
 
-					dImg2d =  Conv2D('conv0_1', conv1_1, 3) # destination
+					dImg2d =  tf.identity(conv1_0) #Conv2D('conv0_1', conv1_1, 3) # destination
 
 		# Reconstruct img
 		recImg = dImg2d + VGG_MEAN_TENSOR
@@ -223,7 +223,7 @@ class ImageDataFlow(RNGDataFlow):
 	def random_crop(self, image, size=256):
 		shape = image.shape
 		dimy, dimx = shape[0], shape[1]
-		assert size<dimx and size<dimy
+		assert size<=dimx and size<=dimy
 		randy = self.rng.randint(0, dimy-size+1)
 		randx = self.rng.randint(0, dimx-size+1)
 		image = image[randy:randy+size,randx:randx+size,...]

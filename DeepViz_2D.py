@@ -33,7 +33,7 @@ from tensorpack.dataflow import dataset
 from tensorpack.utils.gpu import get_nr_gpu
 from tensorpack.utils.utils import get_rng
 from tensorpack.tfutils import optimizer, gradproc
-from tensorpack.tfutils.summary import add_moving_summary, add_param_summary
+from tensorpack.tfutils.summary import add_moving_summary, add_param_summary, add_tensor_summary
 from tensorpack.tfutils.scope_utils import auto_reuse_variable_scope
 from tensorpack.utils import logger
 
@@ -44,8 +44,8 @@ DIMX  = 256
 DIMY  = 256
 SIZE  = 256 # For resize
 
-EPOCH_SIZE = 2000
-BATCH_SIZE = 20
+EPOCH_SIZE = 100
+BATCH_SIZE = 1
 ###################################################################################################
 class Model(ModelDesc):
 	def _get_inputs(self):
@@ -54,30 +54,31 @@ class Model(ModelDesc):
 			InputDesc(tf.float32, (BATCH_SIZE, DIMY, DIMX, 3), 'style'),
 			]
 			
-	def _build_adain_layers(self, content, style, epsilon=1e-5, data_format='channels_last'):
-		axes = [2,3] if data_format == 'channels_first' else [1,2]
+	def _build_adain_layers(self, content, style, eps=1e-5, data_format='channels_last', name='adain'):
+		with tf.variable_scope(name):
+			axes = [2,3] if data_format == 'channels_first' else [1,2]
 
-		c_mean, c_var = tf.nn.moments(content, axes=axes, keep_dims=True)
-		s_mean, s_var = tf.nn.moments(style, axes=axes, keep_dims=True)
-		c_std, s_std = tf.sqrt(c_var + epsilon), tf.sqrt(s_var + epsilon)
+			c_mean, c_var = tf.nn.moments(content, axes=axes, keep_dims=True)
+			s_mean, s_var = tf.nn.moments(style, axes=axes, keep_dims=True)
+			c_std, s_std = tf.sqrt(c_var + eps), tf.sqrt(s_var + eps)
 
-		return s_std * (content - c_mean) / c_std + s_mean
-
+			return s_std * (content - c_mean) / c_std + s_mean
 
 	def _build_content_loss(self, current, target, weight=1.0):
-		loss = tf.reduce_mean(tf.square_difference(current, target))
+		loss = tf.reduce_mean(tf.squared_difference(current, target))
 		return loss*weight
 
 	def _build_style_losses(self, current_layers, target_layers, weight=1.0, eps=1e-6):
-		losses = {}
-		for layer in current_layers:
-			current, target = current_layers[layer], target_layers[layer]
+		losses = []
+		# for layer in current_layers:
+		for current, target in zip(current_layers, target_layers):
+			# current, target = current_layers[layer], target_layers[layer]
 
 			current_mean, current_var = tf.nn.moments(current, axes=[1,2], keep_dims=True) # Normalize to 2,3 is for NCHW; 1,2 is for NHWC
-			current_std = tf.sqrt(current_var + epsilon)
+			current_std = tf.sqrt(current_var + eps)
 
-			target_mean, target_var = tf.nn.moments(target, axes=[1,2], keep_dims=True) # Normalize to 2,3 is for NCHW; 1,2 is for NHWC
-			target_std = tf.sqrt(target_var + epsilon)
+			target_mean, target_var   = tf.nn.moments(target, axes=[1,2], keep_dims=True) # Normalize to 2,3 is for NCHW; 1,2 is for NHWC
+			target_std = tf.sqrt(target_var + eps)
 
 			mean_loss = tf.reduce_sum(tf.squared_difference(current_mean, target_mean))
 			std_loss = tf.reduce_sum(tf.squared_difference(current_std, target_std))
@@ -85,29 +86,29 @@ class Model(ModelDesc):
 			# normalize w.r.t batch size
 			n = tf.cast(tf.shape(current)[0], dtype=tf.float32)
 			mean_loss /= n
-			std_loss /= n
+			std_loss  /= n
 
-			losses[layer] = (mean_loss + std_loss) * weight
+			# losses[layer] = (mean_loss + std_loss) * weight
+			losses.append((mean_loss + std_loss) * weight)
 		return losses
 
 
 	def _build_graph(self, inputs):
 		# sImg2d # sImg the projection 2D, reshape from 
-		VGG_MEAN = np.array([123.68, 116.779, 103.939])  # RGB
-		VGG_MEAN_TENSOR = tf.constant(VGG_MEAN, dtype=tf.float32)
+		VGG19_MEAN = np.array([123.68, 116.779, 103.939])  # RGB
+		VGG19_MEAN_TENSOR = tf.constant(VGG19_MEAN, dtype=tf.float32)
 
 		image, style = inputs # Split the input
 		
-		image = image - VGG_MEAN_TENSOR
-		style = style - VGG_MEAN_TENSOR
+		image = image - VGG19_MEAN_TENSOR
+		style = style - VGG19_MEAN_TENSOR
 		
-
-		def vgg_encoder(input, name='VGG19_Encoder'):
+		@auto_reuse_variable_scope
+		def vgg19_encoder(input, name='VGG19_Encoder'):
 			with tf.variable_scope(name):
-				# VGG 19
 				with varreplace.freeze_variables():
-					with argscope(Conv2D, kernel_shape=3, nl=tf.nn.relu):
-						conv1_1 = Conv2D('conv1_1', input,  64)
+					with argscope([Conv2D], kernel_shape=3, nl=tf.nn.relu):
+						conv1_1 = Conv2D('conv1_1', input,   64)
 						conv1_2 = Conv2D('conv1_2', conv1_1, 64)
 						pool1 = MaxPooling('pool1', conv1_2, 2)  # 64
 						conv2_1 = Conv2D('conv2_1', pool1,   128)
@@ -128,79 +129,123 @@ class Model(ModelDesc):
 						conv5_3 = Conv2D('conv5_3', conv5_2, 512)
 						conv5_4 = Conv2D('conv5_4', conv5_3, 512)
 						pool5 = MaxPooling('pool5', conv5_4, 2)  # 4
+						return conv4_1, [conv1_1, conv2_1, conv3_1, conv4_1] # List of returned feature maps
 
-			return [] # List of feature maps
-
-		def vgg_decoder(input, name='VGG19_Decoder'):
+		@auto_reuse_variable_scope
+		def vgg19_decoder(input, name='VGG19_Decoder'):
 			with tf.variable_scope(name):
 				# with varreplace.freeze_variables():
-					with argscope([Conv2D, Deconv2D], kernel_shape=3, nl=tf.nn.relu):
-						
-						conv5_4 = Conv2D('conv5_4', input,   512)
-						conv5_3 = Conv2D('conv5_3', conv5_2, 512)
-						conv5_2 = Conv2D('conv5_2', conv5_1, 512)
-						conv5_1 = Conv2D('conv5_1', pool4,   512)
-						pool4 = Deconv2D('pool4', conv4_4,   2)  # 8
-						conv4_4 = Conv2D('conv4_4', conv4_3, 512)
-						conv4_3 = Conv2D('conv4_3', conv4_2, 512)
-						conv4_2 = Conv2D('conv4_2', conv4_1, 512)
-						conv4_1 = Conv2D('conv4_1', pool3,   512)
-						pool3 = Deconv2D('pool3', conv3_4,   2)  # 16
-						conv3_4 = Conv2D('conv3_4', conv3_3, 256)
-						conv3_3 = Conv2D('conv3_3', conv3_2, 256)
-						conv3_2 = Conv2D('conv3_2', conv3_1, 256)
-						conv3_1 = Conv2D('conv3_1', pool2,   256)
-						pool2 = Deconv2D('pool2', conv2_2,   2)  # 32
-						conv2_2 = Conv2D('conv2_2', conv2_1, 128)
-						conv2_1 = Conv2D('conv2_1', pool1,   28)
-						pool1 = Deconv2D('pool1', conv1_2,   2)  # 64
-						conv1_2 = Conv2D('conv1_2', conv1_1, 64)
-						conv1_1 = Conv2D('conv1_1', conv1_2, 64)
+					with argscope([Conv2D], kernel_shape=3, nl=tf.nn.relu):	
+						with argscope([Deconv2D], kernel_shape=3, strides=(2,2), nl=tf.nn.relu):
+							# conv5_4 = Conv2D('conv5_4', input,   512)
+							# conv5_3 = Conv2D('conv5_3', conv5_4, 512)
+							# conv5_2 = Conv2D('conv5_2', conv5_3, 512)
+							# conv5_1 = Conv2D('conv5_1', conv5_2, 512)
+							# pool4 = Deconv2D('pool4',   input,   512)  # 8
+							# conv4_4 = Conv2D('conv4_4', pool4,   512)
+							# conv4_3 = Conv2D('conv4_3', conv4_4, 512)
+							# conv4_2 = Conv2D('conv4_2', conv4_3, 512)
+							# conv4_1 = Conv2D('conv4_1', conv4_2, 512)
+							pool3 = Deconv2D('pool3',   input,   256)  # 16
+							conv3_4 = Conv2D('conv3_4', pool3,   256)
+							conv3_3 = Conv2D('conv3_3', conv3_4, 256)
+							conv3_2 = Conv2D('conv3_2', conv3_3, 256)
+							conv3_1 = Conv2D('conv3_1', conv3_2, 256)
+							pool2 = Deconv2D('pool2',   conv3_1, 128)  # 32
+							conv2_2 = Conv2D('conv2_2', pool2, 	 128)
+							conv2_1 = Conv2D('conv2_1', conv2_2, 128)
+							pool1 = Deconv2D('pool1',   conv2_1, 64)  # 64
+							conv1_2 = Conv2D('conv1_2', pool1, 	 64)
+							conv1_1 = Conv2D('conv1_1', conv1_2, 64)
+							conv1_0 = Conv2D('conv1_0', conv1_1, 3)
+							return conv1_0 # List of feature maps
 
-				return [] # List of feature maps
-
-		def vgg_feature(input, name='VGG19_Feature'):
+		@auto_reuse_variable_scope				
+		def vgg19_feature(input, name='VGG19_Feature'):
 			with tf.variable_scope(name):
 				with varreplace.freeze_variables():
-					with argscope([Conv2D, Deconv2D], kernel_shape=3, nl=tf.nn.relu):
-						
-						conv5_4 = Conv2D('conv5_4', input,   512)
-						conv5_3 = Conv2D('conv5_3', conv5_2, 512)
-						conv5_2 = Conv2D('conv5_2', conv5_1, 512)
-						conv5_1 = Conv2D('conv5_1', pool4,   512)
-						pool4 = Deconv2D('pool4', conv4_4,   2)  # 8
-						conv4_4 = Conv2D('conv4_4', conv4_3, 512)
-						conv4_3 = Conv2D('conv4_3', conv4_2, 512)
-						conv4_2 = Conv2D('conv4_2', conv4_1, 512)
-						conv4_1 = Conv2D('conv4_1', pool3,   512)
-						pool3 = Deconv2D('pool3', conv3_4,   2)  # 16
-						conv3_4 = Conv2D('conv3_4', conv3_3, 256)
-						conv3_3 = Conv2D('conv3_3', conv3_2, 256)
-						conv3_2 = Conv2D('conv3_2', conv3_1, 256)
-						conv3_1 = Conv2D('conv3_1', pool2,   256)
-						pool2 = Deconv2D('pool2', conv2_2,   2)  # 32
-						conv2_2 = Conv2D('conv2_2', conv2_1, 128)
-						conv2_1 = Conv2D('conv2_1', pool1,   28)
-						pool1 = Deconv2D('pool1', conv1_2,   2)  # 64
+					with argscope([Conv2D], kernel_shape=3, nl=tf.nn.relu):
+						conv1_1 = Conv2D('conv1_1', input,   64)
 						conv1_2 = Conv2D('conv1_2', conv1_1, 64)
-						conv1_1 = Conv2D('conv1_1', conv1_2, 64)
+						pool1 = MaxPooling('pool1', conv1_2, 2)  # 64
+						conv2_1 = Conv2D('conv2_1', pool1,   128)
+						conv2_2 = Conv2D('conv2_2', conv2_1, 128)
+						pool2 = MaxPooling('pool2', conv2_2, 2)  # 32
+						conv3_1 = Conv2D('conv3_1', pool2,   256)
+						conv3_2 = Conv2D('conv3_2', conv3_1, 256)
+						conv3_3 = Conv2D('conv3_3', conv3_2, 256)
+						conv3_4 = Conv2D('conv3_4', conv3_3, 256)
+						pool3 = MaxPooling('pool3', conv3_4, 2)  # 16
+						conv4_1 = Conv2D('conv4_1', pool3,   512)
+						conv4_2 = Conv2D('conv4_2', conv4_1, 512)
+						conv4_3 = Conv2D('conv4_3', conv4_2, 512)
+						conv4_4 = Conv2D('conv4_4', conv4_3, 512)
+						pool4 = MaxPooling('pool4', conv4_4, 2)  # 8
+						conv5_1 = Conv2D('conv5_1', pool4,   512)
+						conv5_2 = Conv2D('conv5_2', conv5_1, 512)
+						conv5_3 = Conv2D('conv5_3', conv5_2, 512)
+						conv5_4 = Conv2D('conv5_4', conv5_3, 512)
+						pool5 = MaxPooling('pool5', conv5_4, 2)  # 4
+						return conv4_1, [conv1_1, conv2_1, conv3_1, conv4_1] # List of returned feature maps
 
-				return [] # List of feature maps
+		# Step 1: Run thru the encoder
+		image_encoded, image_feature = vgg19_encoder(image)
+		style_encoded, style_feature = vgg19_encoder(style)
+
+		# Step 2: Run thru the adain block to get t=AdIN(f(c), f(s))
+		merge_encoded = self._build_adain_layers(image_encoded, style_encoded)
+
+		# Step 3: Run thru the decoder to get the paint image
+		paint = vgg19_decoder(merge_encoded)
+
+		# Actually, vgg19_feature and vgg19_encoder are identical
+		# Splitting them to improve the programmability 
+		paint_encoded, paint_feature = vgg19_feature(paint)		
+		style_encoded, style_feature = vgg19_feature(style)
+
+		# print(merge_encoded.get_shape())
+		# print(paint_encoded.get_shape())
+		#
+		# Build losses here
+		#
+		with tf.name_scope('losses'):
+			losses = []
+			# Content loss between t and f(g(t))
+			content_loss = self._build_content_loss(merge_encoded, paint_encoded, weight=args.weight_c)
+			# add_moving_summary(content_loss)
+			add_tensor_summary(content_loss, types=['scalar'], name='content_loss')
+			losses.append(content_loss)
+
+			# Style losses between paint and style
+			style_losses = self._build_style_losses(paint_feature, style_feature, weight=args.weight_s)
+			for idx, style_loss in enumerate(style_losses):
+				add_tensor_summary(style_loss, types=['scalar'], name='style_loss')
+				losses.append(style_loss)
+
+			# Total variation loss
+			smoothness = tf.reduce_sum(tf.image.total_variation(paint)) 
+			add_tensor_summary(smoothness, types=['scalar'], name='smoothness')
+			losses.append(smoothness*args.weight_tv)
+			
+			# Total loss
+			self.cost = tf.reduce_sum(losses, name='self.cost') # this one goes to the optimizer
+			add_tensor_summary(self.cost, types=['scalar'], name='self.cost')
+
 
 		# Reconstruct img
-		image = image + VGG_MEAN_TENSOR
-		style = style + VGG_MEAN_TENSOR
-		paint = paint + VGG_MEAN_TENSOR
+		image = image + VGG19_MEAN_TENSOR
+		style = style + VGG19_MEAN_TENSOR
+		paint = paint + VGG19_MEAN_TENSOR
 		# Build loss in here
 		
 
 		# Visualization
-		# viz = tf.concat([rgbImg, recImg], axis=2)
+		viz = tf.concat([image, style, paint], axis=2)
 		viz = tf.cast(tf.clip_by_value(viz, 0, 255), tf.uint8, name='viz')
 		tf.summary.image('colorized', viz, max_outputs=50)
 
 	def _get_optimizer(self):
-		lr  = tf.get_variable('learning_rate', initializer=1e-4, trainable=False)
+		lr  = tf.get_variable('learning_rate', initializer=2e-4, trainable=False)
 		opt = tf.train.AdamOptimizer(lr)
 		return opt
 ####################################################################################################
@@ -223,7 +268,7 @@ class ImageDataFlow(RNGDataFlow):
 		#
 		# Read and store into pairs of images and labels
 		#
-		images = glob.glob(self.image_path + '/*.tif')
+		images = glob.glob(self.image_path + '/*.jpg')
 		styles = glob.glob(self.style_path + '/*.jpg')
 
 		if self._size==None:
@@ -247,20 +292,22 @@ class ImageDataFlow(RNGDataFlow):
 			rand_style = np.random.randint(0, len(styles))
 
 			if self.isTrain:
-				# image = skimage.io.imread(images[rand_image])		
+				# Read image
+				image = cv2.imread(images[rand_image], cv2.IMREAD_COLOR)
+				image = self.central_crop(image)
+				image = self.resize_image(image, size=256)
+				image = self.random_crop (image, size=256)
+
+				# Read style
 				style = cv2.imread(styles[rand_style], cv2.IMREAD_COLOR)
-				# style = style.astype(np.float32)
 				style = self.central_crop(style)
 				style = self.resize_image(style, size=512)
 				style = self.random_crop (style, size=256)
-				# print(style.shape)
-				# logger.auto_set_dir()
-				# logger.info('Style image {} with shape {}'.format(styles[rand_style], style.shape))
-
 			else:
 				pass
 
 			yield [
+				   image.astype(np.float32), 
 				   style.astype(np.float32), 
 				   ]
 
@@ -285,7 +332,7 @@ class ImageDataFlow(RNGDataFlow):
 	def random_crop(self, image, size=256):
 		shape = image.shape
 		dimy, dimx = shape[0], shape[1]
-		assert size<dimx and size<dimy
+		assert size<=dimx and size<=dimy
 		randy = self.rng.randint(0, dimy-size+1)
 		randx = self.rng.randint(0, dimx-size+1)
 		image = image[randy:randy+size,randx:randx+size,...]
@@ -332,7 +379,7 @@ def get_data(image_path, style_path, size=EPOCH_SIZE):
 	ds_train = BatchData(ds_train, BATCH_SIZE)
 	ds_valid = BatchData(ds_valid, BATCH_SIZE)
 
-	ds_train = PrefetchDataZMQ(ds_train, 2)
+	# ds_train = PrefetchDataZMQ(ds_train, 2)
 	return ds_train, ds_valid
 
 ###################################################################################################
@@ -347,8 +394,14 @@ if __name__ == '__main__':
 	parser.add_argument('--vgg19', 		help='load model', 		   default='data/model/vgg19.npz')
 	parser.add_argument('--image_path', help='path to the image.', default='data/train/image/') 
 	parser.add_argument('--style_path', help='path to the style.', default='data/train/style/') 
+	parser.add_argument('--alpha',      help='Between 0 and 1',    default=1.0, type=float)
+	parser.add_argument('--lambda',     help='Between 0 and 1',    default=1e-0, type=float)
+	parser.add_argument('--weight_c',   help='Between 0 and 1',    default=1e-0, type=float)
+	parser.add_argument('--weight_s',   help='Between 0 and 1',    default=1e-2, type=float)
+	parser.add_argument('--weight_tv',  help='Between 0 and 1',    default=0.0,  type=float)
 	parser.add_argument('--render', 	action='store_true')
 	
+	global args
 	args = parser.parse_args()
 
 	if args.gpu:
