@@ -461,20 +461,16 @@ if __name__ == '__main__':
 			# param_dict = dict(np.load(args.vgg19))
 			# param_dict = {'VGG19/' + name: value for name, value in six.iteritems(param_dict)} 
 			
-			h5file = h5py.File(args.vgg19, 'r')
-			print(h5file)
-			print(h5file.keys())
-			
-			
+			weight = h5py.File(args.vgg19, 'r')
 			param_dict = {}
-			param_dict.update({'VGG19_Encoder/' + name: value for name, value in six.iteritems( h5file)})
-			param_dict.update({'VGG19_Feature/' + name: value for name, value in six.iteritems( h5file)})
-			h5file.close()
+			param_dict.update({'VGG19_Encoder/' + name: value for name, value in six.iteritems( weight)})
+			param_dict.update({'VGG19_Feature/' + name: value for name, value in six.iteritems( weight)})
+			weight.close()
 
-			# weight = np.load(args.vgg19)
+			# weight = dict(np.load(args.vgg19))
 			# param_dict = {}
-			# param_dict.update({'VGG19_Encoder/' + name: value for name, value in six.iteritems( dict(weight))})
-			# param_dict.update({'VGG19_Feature/' + name: value for name, value in six.iteritems( dict(weight))})
+			# param_dict.update({'VGG19_Encoder/' + name: value for name, value in six.iteritems(weight)})
+			# param_dict.update({'VGG19_Feature/' + name: value for name, value in six.iteritems(weight)})
 			# print(param_dict)
 			session_init = DictRestore(param_dict)
 
