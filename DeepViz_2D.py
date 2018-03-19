@@ -96,24 +96,35 @@ class Model(ModelDesc):
 			InputDesc(tf.float32, (BATCH_SIZE, DIMY, DIMX, 3), 'style'),
 			]
 			
-	def _build_adain_layers(self, content, style, eps=1e-6, name='adain'):
+	def _build_adain_layers(self, content, style, eps=1e-6, name='adain', is_normalized=True):
 		with tf.variable_scope(name):
+			if is_normalized:
+				content = normalize(content)
+				style   = normalize(style)
 			c_mean, c_var = tf.nn.moments(content, axes=[1,2], keep_dims=True)
 			s_mean, s_var = tf.nn.moments(style,   axes=[1,2], keep_dims=True)
 			c_std, s_std  = tf.sqrt(c_var + eps), tf.sqrt(s_var + eps)
 
-			return s_std * (content - c_mean) / c_std + s_mean
+			results = (s_std * (content - c_mean) / c_std + s_mean)
+			if is_normalized:
+				results = normalize(results)
+			return results
 
-	def _build_content_loss(self, current, target, weight=1.0):
+	def _build_content_loss(self, current, target, weight=1.0, is_normalized=False):
+		if is_normalized:
+			current = normalize(current)
+			target  = normalize(target)
 		loss = tf.reduce_mean(tf.squared_difference(current, target))
 		return loss*weight
 
-	def _build_style_losses(self, current_layers, target_layers, weight=1.0, eps=1e-6):
+	def _build_style_losses(self, current_layers, target_layers, weight=1.0, eps=1e-6, is_normalized=False):
 		losses = []
 		# for layer in current_layers:
 		for current, target in zip(current_layers, target_layers):
-			# current, target = current_layers[layer], target_layers[layer]
-			axes = [1,2]
+			if is_normalized:
+				current = normalize(current)
+				target  = normalize(target)
+
 			current_mean, current_var = tf.nn.moments(current, axes=[1,2], keep_dims=True) # Normalize to 2,3 is for NCHW; 1,2 is for NHWC
 			current_std = tf.sqrt(current_var + eps)
 
@@ -140,14 +151,12 @@ class Model(ModelDesc):
 
 		image, style = inputs # Split the input
 		
-		image = image - VGG19_MEAN_TENSOR
-		style = style - VGG19_MEAN_TENSOR
-		
 		@auto_reuse_variable_scope
 		def vgg19_encoder(source, name='VGG19_Encoder'):
 			with tf.variable_scope(name):
 				with varreplace.freeze_variables():
 					with argscope([Conv2D], kernel_shape=3, nl=tf.nn.relu):
+						source  = source - VGG19_MEAN_TENSOR
 						conv1_1 = Conv2D('conv1_1', source,  64)
 						conv1_2 = Conv2D('conv1_2', conv1_1, 64)
 						pool1 = MaxPooling('pool1', conv1_2, 2)  # 64
@@ -169,7 +178,8 @@ class Model(ModelDesc):
 						conv5_3 = Conv2D('conv5_3', conv5_2, 512)
 						conv5_4 = Conv2D('conv5_4', conv5_3, 512)
 						pool5 = MaxPooling('pool5', conv5_4, 2)  # 4
-						return normalize(conv4_1), [normalize(conv1_1), normalize(conv2_1), normalize(conv3_1), normalize(conv4_1)] # List of returned feature maps
+						# return normalize(conv4_1), [normalize(conv1_1), normalize(conv2_1), normalize(conv3_1), normalize(conv4_1)] # List of returned feature maps
+						return conv4_1, [conv1_1, conv2_1, conv3_1, conv4_1]
 
 
 		@auto_reuse_variable_scope
@@ -199,7 +209,8 @@ class Model(ModelDesc):
 							conv1_2 = Conv2D('conv1_2', pool1, 	 64)
 							conv1_1 = Conv2D('conv1_1', conv1_2, 64)
 							conv1_0 = Conv2D('conv1_0', conv1_1, 3)
-							conv1_0 = 255.0*tf.nn.tanh(conv1_0)
+							conv1_0 = conv1_0 + VGG19_MEAN_TENSOR
+							# conv1_0 = 255.0*tf.nn.tanh(conv1_0)
 							# conv1_0 = tf_2tanh(conv1_0, maxVal=255.0)
 							# conv1_0 = tf_2imag(conv1_0, maxVal=255.0)
 							# conv1_0 = conv1_0 - VGG19_MEAN_TENSOR
@@ -210,6 +221,7 @@ class Model(ModelDesc):
 			with tf.variable_scope(name):
 				with varreplace.freeze_variables():
 					with argscope([Conv2D], kernel_shape=3, nl=tf.nn.relu):
+						source  = source - VGG19_MEAN_TENSOR
 						conv1_1 = Conv2D('conv1_1', source,  64)
 						conv1_2 = Conv2D('conv1_2', conv1_1, 64)
 						pool1 = MaxPooling('pool1', conv1_2, 2)  # 64
@@ -231,8 +243,8 @@ class Model(ModelDesc):
 						conv5_3 = Conv2D('conv5_3', conv5_2, 512)
 						conv5_4 = Conv2D('conv5_4', conv5_3, 512)
 						pool5 = MaxPooling('pool5', conv5_4, 2)  # 4
-						# return conv4_1, [conv1_1, conv2_1, conv3_1, conv4_1]
-						return normalize(conv4_1), [normalize(conv1_1), normalize(conv2_1), normalize(conv3_1), normalize(conv4_1)] # List of returned feature maps
+						return conv4_1, [conv1_1, conv2_1, conv3_1, conv4_1]
+						# return normalize(conv4_1), [normalize(conv1_1), normalize(conv2_1), normalize(conv3_1), normalize(conv4_1)] # List of returned feature maps
 
 
 		# Step 1: Run thru the encoder
@@ -280,9 +292,9 @@ class Model(ModelDesc):
 
 
 		# Reconstruct img
-		image = image + VGG19_MEAN_TENSOR
-		style = style + VGG19_MEAN_TENSOR
-		paint = tf.identity(paint + VGG19_MEAN_TENSOR, name='paint')
+		# image = image + VGG19_MEAN_TENSOR
+		# style = style + VGG19_MEAN_TENSOR
+		paint = tf.identity(paint, name='paint')
 		# Build loss in here
 		
 
@@ -292,7 +304,7 @@ class Model(ModelDesc):
 		tf.summary.image('colorized', viz, max_outputs=50)
 
 	def _get_optimizer(self):
-		lr  = tf.get_variable('learning_rate', initializer=2e-5, trainable=False)
+		lr  = tf.get_variable('learning_rate', initializer=2e-4, trainable=False)
 		opt = tf.train.AdamOptimizer(lr)
 		return opt
 ####################################################################################################
