@@ -82,8 +82,8 @@ def BNLReLU(x, name=None):
 	return tf.nn.leaky_relu(x, name=name)
 
 @layer_register(log_shape=True)
-def Subpix2D(inputs, chan, scale=2, stride=1):
-	with argscope([Conv2D], nl=INReLU, stride=stride, kernel_shape=3):
+def Subpix2D(inputs, chan, scale=2, stride=1, nl=tf.nn.relu):
+	with argscope([Conv2D], nl=nl, stride=stride, kernel_shape=3):
 		results = Conv2D('conv0', inputs, chan* scale**2, padding='SAME')
 		if scale>1:
 			results = tf.depth_to_space(results, scale, name='depth2space', data_format='NHWC')
@@ -99,8 +99,8 @@ class Model(ModelDesc):
 	def _build_adain_layers(self, content, style, eps=1e-6, name='adain'):
 		with tf.variable_scope(name):
 			c_mean, c_var = tf.nn.moments(content, axes=[1,2], keep_dims=True)
-			s_mean, s_var = tf.nn.moments(style, axes=[1,2], keep_dims=True)
-			c_std, s_std = tf.sqrt(c_var + eps), tf.sqrt(s_var + eps)
+			s_mean, s_var = tf.nn.moments(style,   axes=[1,2], keep_dims=True)
+			c_std, s_std  = tf.sqrt(c_var + eps), tf.sqrt(s_var + eps)
 
 			return s_std * (content - c_mean) / c_std + s_mean
 
@@ -117,7 +117,7 @@ class Model(ModelDesc):
 			current_mean, current_var = tf.nn.moments(current, axes=[1,2], keep_dims=True) # Normalize to 2,3 is for NCHW; 1,2 is for NHWC
 			current_std = tf.sqrt(current_var + eps)
 
-			target_mean, target_var   = tf.nn.moments(target, axes=[1,2], keep_dims=True) # Normalize to 2,3 is for NCHW; 1,2 is for NHWC
+			target_mean, target_var   = tf.nn.moments(target,  axes=[1,2], keep_dims=True) # Normalize to 2,3 is for NCHW; 1,2 is for NHWC
 			target_std = tf.sqrt(target_var + eps)
 
 			mean_loss = tf.reduce_sum(tf.squared_difference(current_mean, target_mean))
@@ -169,14 +169,15 @@ class Model(ModelDesc):
 						conv5_3 = Conv2D('conv5_3', conv5_2, 512)
 						conv5_4 = Conv2D('conv5_4', conv5_3, 512)
 						pool5 = MaxPooling('pool5', conv5_4, 2)  # 4
-						return conv4_1, [conv1_1, conv2_1, conv3_1, conv4_1]
+						return normalize(conv4_1), [normalize(conv1_1), normalize(conv2_1), normalize(conv3_1), normalize(conv4_1)] # List of returned feature maps
+
 
 		@auto_reuse_variable_scope
 		def vgg19_decoder(source, name='VGG19_Decoder'):
 			with tf.variable_scope(name):
 				# with varreplace.freeze_variables():
-					with argscope([Conv2D], kernel_shape=3, nl=INReLU):	
-						with argscope([Deconv2D], kernel_shape=3, strides=(2,2), nl=INReLU):
+					with argscope([Conv2D], kernel_shape=3, nl=tf.nn.elu):	
+						with argscope([Deconv2D], kernel_shape=3, strides=(2,2), nl=tf.nn.elu):
 							# conv5_4 = Conv2D('conv5_4', input,   512)
 							# conv5_3 = Conv2D('conv5_3', conv5_4, 512)
 							# conv5_2 = Conv2D('conv5_2', conv5_3, 512)
@@ -197,8 +198,9 @@ class Model(ModelDesc):
 							pool1 = Deconv2D('pool1',   conv2_1, 64)  # 64
 							conv1_2 = Conv2D('conv1_2', pool1, 	 64)
 							conv1_1 = Conv2D('conv1_1', conv1_2, 64)
-							conv1_0 = Conv2D('conv1_0', conv1_1, 3, nl=tf.tanh)
-							conv1_0 = tf_2tanh(conv1_0, maxVal=255.0)
+							conv1_0 = Conv2D('conv1_0', conv1_1, 3)
+							conv1_0 = 255.0*tf.nn.tanh(conv1_0)
+							# conv1_0 = tf_2tanh(conv1_0, maxVal=255.0)
 							# conv1_0 = tf_2imag(conv1_0, maxVal=255.0)
 							# conv1_0 = conv1_0 - VGG19_MEAN_TENSOR
 							return conv1_0 # List of feature maps
@@ -229,9 +231,8 @@ class Model(ModelDesc):
 						conv5_3 = Conv2D('conv5_3', conv5_2, 512)
 						conv5_4 = Conv2D('conv5_4', conv5_3, 512)
 						pool5 = MaxPooling('pool5', conv5_4, 2)  # 4
-						return conv4_1, [conv1_1, conv2_1, conv3_1, conv4_1]
-						# return normalize(conv4_1), 
-						# 	   [normalize(conv1_1), normalize(conv2_1), normalize(conv3_1), normalize(conv4_1)] # List of returned feature maps
+						# return conv4_1, [conv1_1, conv2_1, conv3_1, conv4_1]
+						return normalize(conv4_1), [normalize(conv1_1), normalize(conv2_1), normalize(conv3_1), normalize(conv4_1)] # List of returned feature maps
 
 
 		# Step 1: Run thru the encoder
@@ -437,7 +438,7 @@ if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
 	parser.add_argument('--gpu', 		help='comma separated list of GPU(s) to use.')
 	parser.add_argument('--load', 		help='load model')
-	parser.add_argument('--vgg19', 		help='load model', 		   default='data/model/vgg19_weights_normalized.h5') #vgg19.npz')
+	parser.add_argument('--vgg19', 		help='load model', 		   default='data/model/vgg19.npz') #vgg19.npz')
 	parser.add_argument('--image_path', help='path to the image.', default='data/train/image/') 
 	parser.add_argument('--style_path', help='path to the style.', default='data/train/style/') 
 	parser.add_argument('--alpha',      help='Between 0 and 1',    default=1.0,  type=float)
@@ -472,16 +473,16 @@ if __name__ == '__main__':
 			# param_dict = dict(np.load(args.vgg19))
 			# param_dict = {'VGG19/' + name: value for name, value in six.iteritems(param_dict)} 
 			
-			weight = h5py.File(args.vgg19, 'r')
-			param_dict = {}
-			param_dict.update({'VGG19_Encoder/' + name: value for name, value in six.iteritems( weight)})
-			param_dict.update({'VGG19_Feature/' + name: value for name, value in six.iteritems( weight)})
-			weight.close()
-
-			# weight = dict(np.load(args.vgg19))
+			# weight = h5py.File(args.vgg19, 'r')
 			# param_dict = {}
-			# param_dict.update({'VGG19_Encoder/' + name: value for name, value in six.iteritems(weight)})
-			# param_dict.update({'VGG19_Feature/' + name: value for name, value in six.iteritems(weight)})
+			# param_dict.update({'VGG19_Encoder/' + name: value for name, value in six.iteritems( weight)})
+			# param_dict.update({'VGG19_Feature/' + name: value for name, value in six.iteritems( weight)})
+			# weight.close()
+
+			weight = dict(np.load(args.vgg19))
+			param_dict = {}
+			param_dict.update({'VGG19_Encoder/' + name: value for name, value in six.iteritems(weight)})
+			param_dict.update({'VGG19_Feature/' + name: value for name, value in six.iteritems(weight)})
 			# print(param_dict)
 			session_init = DictRestore(param_dict)
 
