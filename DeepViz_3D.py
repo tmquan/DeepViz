@@ -45,7 +45,7 @@ DIMY  = 256
 DIMZ  = 256
 SIZE  = 256 # For resize
 
-EPOCH_SIZE = 200
+EPOCH_SIZE = 10
 BATCH_SIZE = 1
 
 VGG19_MEAN = np.array([123.68, 116.779, 103.939])  # RGB
@@ -86,7 +86,7 @@ def BNLReLU(x, name=None):
 	return tf.nn.leaky_relu(x, name=name)
 
 @layer_register(log_shape=True)
-def Subpix2D(inputs, chan, scale=2, stride=1, nl=tf.nn.relu):
+def Subpix2D(inputs, chan, scale=2, stride=1, nl=INLReLU):
 	with argscope([Conv2D], nl=nl, stride=stride, kernel_shape=3):
 		results = Conv2D('conv0', inputs, chan* scale**2, padding='SAME')
 		if scale>1:
@@ -151,7 +151,7 @@ class Model(ModelDesc):
 	@auto_reuse_variable_scope
 	def vol3d_encoder(self, x, name='Vol3D_Encoder'):
 		# with varreplace.freeze_variables():
-			with argscope([Conv2D], kernel_shape=3, nl=tf.nn.relu):
+			with argscope([Conv2D], kernel_shape=3, nl=INLReLU):
 				x = tf.transpose(x, [3, 1, 2, 0]) # from z y x c to c y x z
 				x = tf_2tanh(x)
 				x = (LinearWrap(x)
@@ -170,21 +170,22 @@ class Model(ModelDesc):
 	@auto_reuse_variable_scope
 	def vol3d_decoder(self, x, name='Vol3D_Decoder'):
 		# with varreplace.freeze_variables():
-			with argscope([Conv2D], kernel_shape=3, nl=tf.nn.relu):
-				x = tf.transpose(x, [3, 1, 2, 0]) # from 1 y x c to c y x 1
-				x = tf_2tanh(x)
-				x = (LinearWrap(x)
-						.Subpix2D('conv7', DIMZ/128,scale=1, ) # 2
-						.Subpix2D('conv6', DIMZ/64, scale=1, ) # 4
-						.Subpix2D('conv5', DIMZ/32, scale=1, ) # 8
-						.Subpix2D('conv4', DIMZ/16, scale=1, ) # 16
-						.Subpix2D('conv3', DIMZ/8,  scale=1, ) # 32
-						.Subpix2D('conv2', DIMZ/4,  scale=1, ) # 64				
-						.Subpix2D('conv1', DIMZ/2,  scale=1, ) # 128
-						.Subpix2D('conv0', DIMZ/1,  scale=1, nl=tf.nn.tanh) # 128
-						())
-				x = tf.transpose(x, [3, 1, 2, 0]) # from c y x z to z y x c
-				x = tf_2imag(x)
+			with argscope([Conv2D], kernel_shape=3, nl=INLReLU):
+				with argscope([Deconv2D], kernel_shape=3, strides=(1,1), nl=INLReLU):
+					x = tf.transpose(x, [3, 1, 2, 0]) # from 1 y x c to c y x 1
+					x = tf_2tanh(x)
+					x = (LinearWrap(x)
+							.Deconv2D('conv7', int(DIMZ/128)) # 2
+							.Deconv2D('conv6', int(DIMZ/64 )) # 4
+							.Deconv2D('conv5', int(DIMZ/32 )) # 8
+							.Deconv2D('conv4', int(DIMZ/16 )) # 16
+							.Deconv2D('conv3', int(DIMZ/8  )) # 32
+							.Deconv2D('conv2', int(DIMZ/4  )) # 64				
+							.Deconv2D('conv1', int(DIMZ/2  )) # 128
+							.Deconv2D('conv0', int(DIMZ/1  ), nl=tf.nn.tanh) # 128
+							())
+					x = tf.transpose(x, [3, 1, 2, 0]) # from c y x z to z y x c
+					x = tf_2imag(x)
 				return x
 
 	@auto_reuse_variable_scope
@@ -218,18 +219,18 @@ class Model(ModelDesc):
 	@auto_reuse_variable_scope
 	def vgg19_decoder(self, inputs, name='VGG19_Decoder'):
 		# with varreplace.freeze_variables():
-			with argscope([Conv2D], kernel_shape=3, nl=tf.nn.leaky_relu):	
-				with argscope([Deconv2D], kernel_shape=3, strides=(2,2), nl=tf.nn.leaky_relu):
+			with argscope([Conv2D], kernel_shape=3, nl=INLReLU):	
+				with argscope([Deconv2D], kernel_shape=3, strides=(2,2), nl=INLReLU):
 					# conv4_1 = Conv2D('conv4_1', conv4_2, 512)
-					pool3 = Subpix2D('pool3',   inputs,  256)  # 16
+					pool3 = Deconv2D('pool3',   inputs,  256)  # 16
 					conv3_4 = Conv2D('conv3_4', pool3,   256)
 					conv3_3 = Conv2D('conv3_3', conv3_4, 256)
 					conv3_2 = Conv2D('conv3_2', conv3_3, 256)
 					conv3_1 = Conv2D('conv3_1', conv3_2, 256)
-					pool2 = Subpix2D('pool2',   conv3_1, 128)  # 32
+					pool2 = Deconv2D('pool2',   conv3_1, 128)  # 32
 					conv2_2 = Conv2D('conv2_2', pool2, 	 128)
 					conv2_1 = Conv2D('conv2_1', conv2_2, 128)
-					pool1 = Subpix2D('pool1',   conv2_1, 64)  # 64
+					pool1 = Deconv2D('pool1',   conv2_1, 64)  # 64
 					conv1_2 = Conv2D('conv1_2', pool1, 	 64)
 					conv1_1 = Conv2D('conv1_1', conv1_2, 64)
 					conv1_0 = Conv2D('conv1_0', conv1_1, 3)
@@ -284,12 +285,13 @@ class Model(ModelDesc):
 			add_moving_summary(loss_img3d)
 			add_moving_summary(loss_style)
 
-			losses.append(loss_img2d)
-			losses.append(loss_img3d)
-			losses.append(loss_style)
+			losses.append(2e2*loss_img2d)
+			losses.append(1e0*loss_img3d)
+			losses.append(2e2*loss_style)
 		self.cost = tf.reduce_sum(losses, name='self.cost')
 		add_moving_summary(self.cost)
 
+		# with tf.name_scope('visualization'):
 		mid=128
 		viz_img3d_1 = img3d[mid-2:mid-1,...]
 		viz_img3d_2 = img3d[mid-1:mid-0,...]
@@ -303,9 +305,12 @@ class Model(ModelDesc):
 
 		viz_style 		  = style
 		viz_style_decoded = style_decoded
+
+		viz_img2d 		  = img2d
+		viz_img2d_decoded = img2d_decoded
 		# Visualization
-		viz = tf.concat([tf.concat([viz_img3d_1, viz_img3d_2, viz_img3d_3, viz_img3d_4, viz_style], 2), 
-						 tf.concat([viz_img3d_decoded_1, viz_img3d_decoded_2, viz_img3d_decoded_3, viz_img3d_decoded_4, viz_style_decoded], 2), 
+		viz = tf.concat([tf.concat([viz_img3d_1, viz_img3d_2, viz_img3d_3, viz_img3d_4, viz_img2d, viz_style], 2), 
+						 tf.concat([viz_img3d_decoded_1, viz_img3d_decoded_2, viz_img3d_decoded_3, viz_img3d_decoded_4, viz_img2d_decoded, viz_style_decoded], 2), 
 						 ], 1)
 		# viz = tf.concat([tf.concat([viz_img3d_1, viz_img3d_decoded_1], 2), 
 		# 				 tf.concat([viz_img3d_2, viz_img3d_decoded_2], 2), 
@@ -528,7 +533,7 @@ class VisualizeRunner(Callback):
 
 			#print viz_valid.shape
 
-			self.trainer.monitors.put_image('viz_valid', viz_valid)
+			self.trainer.monitors.put_image('viz_valid', viz_valid[...,::-1])
 ###################################################################################################
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
@@ -590,7 +595,7 @@ if __name__ == '__main__':
 			dataflow        =   ds_train,
 			callbacks       =   [
 				PeriodicTrigger(ModelSaver(), every_k_epochs=50),
-				PeriodicTrigger(VisualizeRunner(), every_k_epochs=5),
+				PeriodicTrigger(VisualizeRunner(), every_k_epochs=1),
 				ScheduledHyperParamSetter('learning_rate', [(0, 2e-4), (100, 1e-4), (200, 1e-5), (300, 1e-6)], interp='linear')
 				#ScheduledHyperParamSetter('learning_rate', [(30, 6e-6), (45, 1e-6), (60, 8e-7)]),
 				#HumanHyperParamSetter('learning_rate'),
