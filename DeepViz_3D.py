@@ -52,11 +52,11 @@ VGG19_MEAN = np.array([123.68, 116.779, 103.939])  # RGB
 VGG19_MEAN_TENSOR = tf.constant(VGG19_MEAN, dtype=tf.float32)
 ###############################################################################
 # Utility function for scaling 
-def tf_2tanh(x, maxVal = 255.0, name='ToRangeTanh'):
+def tf_2tanh(x, maxVal=255.0, name='ToRangeTanh'):
 	with tf.variable_scope(name):
 		return (x / maxVal - 0.5) * 2.0
 ###############################################################################
-def tf_2imag(x, maxVal = 255.0, name='ToRangeImag'):
+def tf_2imag(x, maxVal=255.0, name='ToRangeImag'):
 	with tf.variable_scope(name):
 		return (x / 2.0 + 0.5) * maxVal
 
@@ -153,6 +153,7 @@ class Model(ModelDesc):
 		# with varreplace.freeze_variables():
 			with argscope([Conv2D], kernel_shape=3, nl=tf.nn.relu):
 				x = tf.transpose(x, [3, 1, 2, 0]) # from z y x c to c y x z
+				x = tf_2tanh(x)
 				x = (LinearWrap(x)
 						.Conv2D('conv1', DIMZ/2,   padding='SAME') # 128
 						.Conv2D('conv2', DIMZ/4,   padding='SAME') # 64				
@@ -161,26 +162,29 @@ class Model(ModelDesc):
 						.Conv2D('conv5', DIMZ/32,  padding='SAME') # 8
 						.Conv2D('conv6', DIMZ/64,  padding='SAME') # 4
 						.Conv2D('conv7', DIMZ/128, padding='SAME') # 2
-						.Conv2D('conv8', DIMZ/256, padding='SAME') # 1
+						.Conv2D('conv8', DIMZ/256, padding='SAME', nl=tf.nn.tanh) # 1
 						())
 				x = tf.transpose(x, [3, 1, 2, 0]) # from c y x 1 to 1 y x c
+				x = tf_2imag(x, maxVal=255.0)
 				return x
 	@auto_reuse_variable_scope
 	def vol3d_decoder(self, x, name='Vol3D_Decoder'):
 		# with varreplace.freeze_variables():
 			with argscope([Conv2D], kernel_shape=3, nl=tf.nn.relu):
 				x = tf.transpose(x, [3, 1, 2, 0]) # from 1 y x c to c y x 1
+				x = tf_2tanh(x)
 				x = (LinearWrap(x)
-						.Conv2D('conv7', DIMZ/128, padding='SAME') # 2
-						.Conv2D('conv6', DIMZ/64,  padding='SAME') # 4
-						.Conv2D('conv5', DIMZ/32,  padding='SAME') # 8
-						.Conv2D('conv4', DIMZ/16,  padding='SAME') # 16
-						.Conv2D('conv3', DIMZ/8,   padding='SAME') # 32
-						.Conv2D('conv2', DIMZ/4,   padding='SAME') # 64				
-						.Conv2D('conv1', DIMZ/2,   padding='SAME') # 128
-						.Conv2D('conv0', DIMZ/1,   padding='SAME') # 128
+						.Subpix2D('conv7', DIMZ/128,scale=1, ) # 2
+						.Subpix2D('conv6', DIMZ/64, scale=1, ) # 4
+						.Subpix2D('conv5', DIMZ/32, scale=1, ) # 8
+						.Subpix2D('conv4', DIMZ/16, scale=1, ) # 16
+						.Subpix2D('conv3', DIMZ/8,  scale=1, ) # 32
+						.Subpix2D('conv2', DIMZ/4,  scale=1, ) # 64				
+						.Subpix2D('conv1', DIMZ/2,  scale=1, ) # 128
+						.Subpix2D('conv0', DIMZ/1,  scale=1, nl=tf.nn.tanh) # 128
 						())
 				x = tf.transpose(x, [3, 1, 2, 0]) # from c y x z to z y x c
+				x = tf_2imag(x)
 				return x
 
 	@auto_reuse_variable_scope
@@ -256,6 +260,7 @@ class Model(ModelDesc):
 			chose_encoded = tf.cond(condition > 0, # if istest turns on, perform statistical transfering
 									lambda: tf.identity(merge_encoded), 
 									lambda: tf.identity(img2d_encoded)) #else get the img2d_encoded
+			style_encoded = tf.identity(style_encoded)
 
 		# Step 3: Run thru the decoder to get the paint image
 		with tf.variable_scope('decoder_vgg19_2d'):
@@ -299,12 +304,15 @@ class Model(ModelDesc):
 		viz_style 		  = style
 		viz_style_decoded = style_decoded
 		# Visualization
-		viz = tf.concat([tf.concat([viz_img3d_1, viz_img3d_decoded_1], 2), 
-						 tf.concat([viz_img3d_2, viz_img3d_decoded_2], 2), 
-						 tf.concat([viz_img3d_3, viz_img3d_decoded_3], 2), 
-						 tf.concat([viz_img3d_4, viz_img3d_decoded_4], 2), 
-						 tf.concat([viz_style  , viz_style_decoded], 2), 
+		viz = tf.concat([tf.concat([viz_img3d_1, viz_img3d_2, viz_img3d_3, viz_img3d_4, viz_style], 2), 
+						 tf.concat([viz_img3d_decoded_1, viz_img3d_decoded_2, viz_img3d_decoded_3, viz_img3d_decoded_4, viz_style_decoded], 2), 
 						 ], 1)
+		# viz = tf.concat([tf.concat([viz_img3d_1, viz_img3d_decoded_1], 2), 
+		# 				 tf.concat([viz_img3d_2, viz_img3d_decoded_2], 2), 
+		# 				 tf.concat([viz_img3d_3, viz_img3d_decoded_3], 2), 
+		# 				 tf.concat([viz_img3d_4, viz_img3d_decoded_4], 2), 
+		# 				 tf.concat([viz_style  , viz_style_decoded], 2), 
+		# 				 ], 1)
 		viz = tf.cast(tf.clip_by_value(viz, 0, 255), tf.uint8, name='viz')
 		tf.summary.image('colorized', viz, max_outputs=50)
 
@@ -359,7 +367,7 @@ class ImageDataFlow(RNGDataFlow):
 				rand_image = np.random.randint(0, len(images))
 				rand_style = np.random.randint(0, len(styles))
 				image = skimage.io.imread(images[rand_image])
-				style = skimage.io.imread(styles[rand_style])
+				style = cv2.imread(styles[rand_style], cv2.IMREAD_COLOR)
 
 				# Image augmentation
 				image = self.random_flip(image)
@@ -375,7 +383,7 @@ class ImageDataFlow(RNGDataFlow):
 				rand_image = np.random.randint(0, len(images))
 				rand_style = np.random.randint(0, len(styles))
 				image = skimage.io.imread(images[rand_image])
-				style = skimage.io.imread(styles[rand_style])
+				style = cv2.imread(styles[rand_style], cv2.IMREAD_COLOR)
 
 				# Style augmentation
 				style = self.central_crop(style)
@@ -503,6 +511,24 @@ def get_data(image_path, style_path, size=EPOCH_SIZE):
 def render(model_path, volume_path, style_path):
 	pass
 
+
+class VisualizeRunner(Callback):
+	def _setup_graph(self):
+		self.pred = self.trainer.get_predictor(
+			['image', 'style', 'condition'], ['viz'])
+
+	def _before_train(self):
+		global args
+		self.ds_train, self.ds_valid = get_data(args.image_path, args.style_path)
+
+	def _trigger(self):
+		for lst in self.ds_valid.get_data():
+			viz_valid = self.pred(lst)
+			viz_valid = np.squeeze(np.array(viz_valid))
+
+			#print viz_valid.shape
+
+			self.trainer.monitors.put_image('viz_valid', viz_valid)
 ###################################################################################################
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
@@ -564,7 +590,7 @@ if __name__ == '__main__':
 			dataflow        =   ds_train,
 			callbacks       =   [
 				PeriodicTrigger(ModelSaver(), every_k_epochs=50),
-				# PeriodicTrigger(VisualizeRunner(valid_ds), every_k_epochs=5),
+				PeriodicTrigger(VisualizeRunner(), every_k_epochs=5),
 				ScheduledHyperParamSetter('learning_rate', [(0, 2e-4), (100, 1e-4), (200, 1e-5), (300, 1e-6)], interp='linear')
 				#ScheduledHyperParamSetter('learning_rate', [(30, 6e-6), (45, 1e-6), (60, 8e-7)]),
 				#HumanHyperParamSetter('learning_rate'),
