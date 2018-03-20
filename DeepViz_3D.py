@@ -363,6 +363,8 @@ class Model(ModelDesc):
 		self.cost = tf.reduce_sum(losses, name='self.cost')
 		add_moving_summary(self.cost)
 
+		out_vol3d 			= tf.identity(vol3d, 		 name='out_vol3d')
+		out_vol3d_decoded 	= tf.identity(vol3d_decoded, name='out_vol3d_decoded')
 		with tf.name_scope('visualization'):
 			mid=128
 			viz_vol_0 = vol3d[mid-2:mid-1,...]
@@ -405,13 +407,14 @@ class Model(ModelDesc):
 		return opt
 ####################################################################################################
 class ImageDataFlow(RNGDataFlow):
-	def __init__(self, image_path, style_path, size, dtype='float32', isTrain=False, isValid=False):
+	def __init__(self, image_path, style_path, size, dtype='float32', isTrain=False, isValid=False, isTest=False):
 		self.dtype      	= dtype
 		self.image_path   	= image_path
 		self.style_path   	= style_path
 		self._size      	= size
 		self.isTrain    	= isTrain
 		self.isValid    	= isValid
+		self.isTest   	 	= isTest
 
 	def size(self):
 		return self._size
@@ -457,21 +460,34 @@ class ImageDataFlow(RNGDataFlow):
 				image = self.random_square_rotate(image)
 				image = self.random_reverse(image)
 				image = self.random_permute(image)
+				image = self.random_pad(image)
+
 				# Style augmentation
 				style = self.central_crop(style)
 				style = self.resize_image(style, size=512)
 				style = self.random_crop (style, size=256)
-			else:
+			elif self.isValid:
 				# Read image
 				rand_image = np.random.randint(0, len(images))
 				rand_style = np.random.randint(0, len(styles))
 				image = skimage.io.imread(images[rand_image])
 				style = cv2.imread(styles[rand_style], cv2.IMREAD_COLOR)
 
+				image = self.random_pad(image, symmetry=True)
 				# Style augmentation
 				style = self.central_crop(style)
 				style = self.resize_image(style, size=256)
+			elif self.isTest:
+				# Read image
+				rand_image = np.random.randint(0, len(images))
+				rand_style = np.random.randint(0, len(styles))
+				image = skimage.io.imread(images[rand_image])
+				style = cv2.imread(styles[rand_style], cv2.IMREAD_COLOR)
 
+				image = self.random_pad(image, symmetry=True)
+				# Style augmentation
+				style = self.central_crop(style)
+				style = self.resize_image(style, size=256)
 			# Make RGB volume
 			image = np.stack([image,image,image], axis=3) #012 to 0123
 			image = np.squeeze(image)
@@ -512,6 +528,32 @@ class ImageDataFlow(RNGDataFlow):
 		randx = self.rng.randint(0, dimx-size+1)
 		image = image[randy:randy+size,randx:randx+size,...]
 		return image
+
+	
+	def random_pad(self, image, target_shape=[DIMZ, DIMY, DIMX], seed=None, symmetry=False):
+		assert ((image.ndim == 3))
+		if seed:
+			self.rng.seed(seed)
+		
+		dimz, dimy, dimx = image.shape
+		assert (dimz <= DIMZ)
+		assert (dimy <= DIMY)
+		assert (dimx <= DIMX)
+		padded = np.zeros([DIMZ, DIMY, DIMX], dtype=np.float32)
+		if not symmetry:
+			offset = [self.rng.randint(0, DIMZ-dimz+1), 
+					  self.rng.randint(0, DIMY-dimy+1), 
+					  self.rng.randint(0, DIMX-dimx+1), 
+					  ]
+		else:
+			offset = [int((DIMZ-dimz)/2), 
+					  int((DIMY-dimy)/2), 
+					  int((DIMX-dimx)/2), 
+					  ]
+		padded[offset[0]:offset[0]+dimz,
+			   offset[1]:offset[1]+dimy,
+			   offset[2]:offset[2]+dimx]	= image
+		return padded
 
 	def random_flip(self, image, seed=None):
 		assert ((image.ndim == 2) | (image.ndim == 3))
@@ -577,7 +619,7 @@ def get_data(image_path, style_path, size=EPOCH_SIZE):
 
 	ds_valid = ImageDataFlow(image_path=image_path.replace('train','valid'),
 							 style_path=style_path.replace('train','valid'), 
-							 size=6, 
+							 size=20, 
 							 isValid=True
 							 )
 
