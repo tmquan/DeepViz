@@ -47,6 +47,7 @@ SIZE  = 256 # For resize
 
 EPOCH_SIZE = 10
 BATCH_SIZE = 1
+NB_FILTERS = 32
 
 VGG19_MEAN = np.array([123.68, 116.779, 103.939])  # RGB
 VGG19_MEAN_TENSOR = tf.constant(VGG19_MEAN, dtype=tf.float32)
@@ -84,23 +85,78 @@ def INLReLU(x, name=None):
 def BNLReLU(x, name=None):
 	x = BatchNorm('bn', x)
 	return tf.nn.leaky_relu(x, name=name)
-
+###############################################################################
+# FusionNet
 @layer_register(log_shape=True)
-def Subpix2D(inputs, chan, scale=2, stride=1, nl=INLReLU):
+def residual(x, chan, first=False):
+	with argscope([Conv2D], nl=INLReLU, stride=1, kernel_shape=3):
+		input = x
+		return (LinearWrap(x)
+				.Conv2D('conv1', chan, padding='SAME', dilation_rate=1)
+				.Conv2D('conv2', chan, padding='SAME', dilation_rate=2)
+				.Conv2D('conv4', chan, padding='SAME', dilation_rate=4)				
+				.Conv2D('conv5', chan, padding='SAME', dilation_rate=8)
+				.Conv2D('conv0', chan, padding='SAME', nl=tf.identity)
+				.InstanceNorm('inorm')()) + input
+
+###############################################################################
+@layer_register(log_shape=True)
+def Subpix2D(inputs, chan, scale=2, stride=1, nl=tf.nn.leaky_relu):
 	with argscope([Conv2D], nl=nl, stride=stride, kernel_shape=3):
 		results = Conv2D('conv0', inputs, chan* scale**2, padding='SAME')
+		old_shape = inputs.get_shape().as_list()
+		# results = tf.reshape(results, [-1, chan, old_shape[2]*scale, old_shape[3]*scale])
+		# results = tf.reshape(results, [-1, old_shape[1]*scale, old_shape[2]*scale, chan])
 		if scale>1:
 			results = tf.depth_to_space(results, scale, name='depth2space', data_format='NHWC')
 		return results
+
+###############################################################################
+@layer_register(log_shape=True)
+def residual_enc(x, chan, first=False):
+	with argscope([Conv2D, Deconv2D], nl=INLReLU, stride=1, kernel_shape=3):
+		x = (LinearWrap(x)
+			# .Dropout('drop', 0.75)
+			.Conv2D('conv_i', chan, stride=2) 
+			.residual('res_', chan, first=True)
+			.Conv2D('conv_o', chan, stride=1) 
+			())
+		return x
+
+###############################################################################
+@layer_register(log_shape=True)
+def residual_dec(x, chan, first=False):
+	with argscope([Conv2D, Deconv2D], nl=INLReLU, stride=1, kernel_shape=3):
+				
+		x = (LinearWrap(x)
+			.Subpix2D('deconv_i', chan, scale=1) 
+			.residual('res2_', chan, first=True)
+			.Subpix2D('deconv_o', chan, scale=2) 
+			# .Dropout('drop', 0.75)
+			())
+		return x
+
+###############################################################################
+@auto_reuse_variable_scope
+def fusionNet(img, last_dim=1):
+	assert img is not None
+	with argscope([Conv2D, Deconv2D], nl=INLReLU, kernel_shape=3, stride=2, padding='SAME'):
+		e0 = residual_enc('e0', img, NB_FILTERS*1)
+		e1 = residual_enc('e1',  e0, NB_FILTERS*2)
+		e2 = residual_enc('e2',  e1, NB_FILTERS*4)
+
+		e3 = residual_enc('e3',  e2, NB_FILTERS*8)
+		# e3 = Dropout('dr', e3, 0.5)
+
+		d3 = residual_dec('d3',    e3, NB_FILTERS*4)
+		d2 = residual_dec('d2', d3+e2, NB_FILTERS*2)
+		d1 = residual_dec('d1', d2+e1, NB_FILTERS*1)
+		d0 = residual_dec('d0', d1+e0, NB_FILTERS*1) 
+		dd =  (LinearWrap(d0)
+				.Conv2D('convlast', last_dim, kernel_shape=3, stride=1, padding='SAME', nl=tf.tanh, use_bias=True) ())
+		return dd, d0
 ###################################################################################################
 class Model(ModelDesc):
-	def _get_inputs(self):
-		return [
-			InputDesc(tf.float32, (DIMZ, DIMY, DIMX, 3), 'image'),
-			InputDesc(tf.float32, (   1, DIMY, DIMX, 3), 'style'),
-			InputDesc(tf.int32,                  (1, 1), 'condition'),
-			]
-			
 	def _build_adain_layers(self, content, style, eps=1e-6, name='adain', is_normalized=True):
 		with tf.variable_scope(name):
 			# if is_normalized:
@@ -151,7 +207,7 @@ class Model(ModelDesc):
 	@auto_reuse_variable_scope
 	def vol3d_encoder(self, x, name='Vol3D_Encoder'):
 		# with varreplace.freeze_variables():
-			with argscope([Conv2D], kernel_shape=3, nl=INLReLU):
+			with argscope([Conv2D], kernel_shape=3, nl=BNLReLU):
 				x = tf.transpose(x, [3, 1, 2, 0]) # from z y x c to c y x z
 				x = tf_2tanh(x)
 				x = (LinearWrap(x)
@@ -164,28 +220,29 @@ class Model(ModelDesc):
 						.Conv2D('conv7', DIMZ/128, padding='SAME') # 2
 						.Conv2D('conv8', DIMZ/256, padding='SAME', nl=tf.nn.tanh) # 1
 						())
+				# x, _ = fusionNet(x, last_dim=1)
 				x = tf.transpose(x, [3, 1, 2, 0]) # from c y x 1 to 1 y x c
 				x = tf_2imag(x, maxVal=255.0)
 				return x
 	@auto_reuse_variable_scope
 	def vol3d_decoder(self, x, name='Vol3D_Decoder'):
 		# with varreplace.freeze_variables():
-			with argscope([Conv2D], kernel_shape=3, nl=INLReLU):
-				with argscope([Deconv2D], kernel_shape=3, strides=(1,1), nl=INLReLU):
-					x = tf.transpose(x, [3, 1, 2, 0]) # from 1 y x c to c y x 1
-					x = tf_2tanh(x)
-					x = (LinearWrap(x)
-							.Deconv2D('conv7', int(DIMZ/128)) # 2
-							.Deconv2D('conv6', int(DIMZ/64 )) # 4
-							.Deconv2D('conv5', int(DIMZ/32 )) # 8
-							.Deconv2D('conv4', int(DIMZ/16 )) # 16
-							.Deconv2D('conv3', int(DIMZ/8  )) # 32
-							.Deconv2D('conv2', int(DIMZ/4  )) # 64				
-							.Deconv2D('conv1', int(DIMZ/2  )) # 128
-							.Deconv2D('conv0', int(DIMZ/1  ), nl=tf.nn.tanh) # 128
-							())
-					x = tf.transpose(x, [3, 1, 2, 0]) # from c y x z to z y x c
-					x = tf_2imag(x)
+			with argscope([Conv2D], kernel_shape=3, nl=BNLReLU):
+				x = tf.transpose(x, [3, 1, 2, 0]) # from 1 y x c to c y x 1
+				x = tf_2tanh(x)
+				x = (LinearWrap(x)
+						.Subpix2D('conv7', DIMZ/128,scale=1, ) # 2
+						.Subpix2D('conv6', DIMZ/64, scale=1, ) # 4
+						.Subpix2D('conv5', DIMZ/32, scale=1, ) # 8
+						.Subpix2D('conv4', DIMZ/16, scale=1, ) # 16
+						.Subpix2D('conv3', DIMZ/8,  scale=1, ) # 32
+						.Subpix2D('conv2', DIMZ/4,  scale=1, ) # 64				
+						.Subpix2D('conv1', DIMZ/2,  scale=1, ) # 128
+						.Subpix2D('conv0', DIMZ/1,  scale=1, nl=tf.nn.tanh) # 128
+						())
+				# x, _ = fusionNet(x, last_dim=DIMZ)
+				x = tf.transpose(x, [3, 1, 2, 0]) # from c y x z to z y x c
+				x = tf_2imag(x)
 				return x
 
 	@auto_reuse_variable_scope
@@ -214,62 +271,70 @@ class Model(ModelDesc):
 				conv5_3 = Conv2D('conv5_3', conv5_2, 512)
 				conv5_4 = Conv2D('conv5_4', conv5_3, 512)
 				pool5 = MaxPooling('pool5', conv5_4, 2)  # 4
-				return conv4_1, [conv1_1, conv2_1, conv3_1, conv4_1]
+				return normalize(conv4_1), [conv1_1, conv2_1, conv3_1, conv4_1]
 
 	@auto_reuse_variable_scope
 	def vgg19_decoder(self, inputs, name='VGG19_Decoder'):
 		# with varreplace.freeze_variables():
-			with argscope([Conv2D], kernel_shape=3, nl=INLReLU):	
-				with argscope([Deconv2D], kernel_shape=3, strides=(2,2), nl=INLReLU):
+			with argscope([Conv2D], kernel_shape=3, nl=BNLReLU):	
+				with argscope([Deconv2D], kernel_shape=3, strides=(2,2), nl=BNLReLU):
 					# conv4_1 = Conv2D('conv4_1', conv4_2, 512)
-					pool3 = Deconv2D('pool3',   inputs,  256)  # 16
+					pool3 = Subpix2D('pool3',   inputs,  256)  # 16
 					conv3_4 = Conv2D('conv3_4', pool3,   256)
 					conv3_3 = Conv2D('conv3_3', conv3_4, 256)
 					conv3_2 = Conv2D('conv3_2', conv3_3, 256)
 					conv3_1 = Conv2D('conv3_1', conv3_2, 256)
-					pool2 = Deconv2D('pool2',   conv3_1, 128)  # 32
+					pool2 = Subpix2D('pool2',   conv3_1, 128)  # 32
 					conv2_2 = Conv2D('conv2_2', pool2, 	 128)
 					conv2_1 = Conv2D('conv2_1', conv2_2, 128)
-					pool1 = Deconv2D('pool1',   conv2_1, 64)  # 64
+					pool1 = Subpix2D('pool1',   conv2_1, 64)  # 64
 					conv1_2 = Conv2D('conv1_2', pool1, 	 64)
 					conv1_1 = Conv2D('conv1_1', conv1_2, 64)
 					conv1_0 = Conv2D('conv1_0', conv1_1, 3)
 					conv1_0 = conv1_0 + VGG19_MEAN_TENSOR
 					return conv1_0 # List of feature maps
 
-						
+	def _get_inputs(self):
+		return [
+			InputDesc(tf.float32, (DIMZ, DIMY, DIMX, 3), 'image'),
+			InputDesc(tf.float32, (   1, DIMY, DIMX, 3), 'style'),
+			InputDesc(tf.int32,                  (1, 1), 'condition'),
+			]
+									
 	def _build_graph(self, inputs):
 		# sImg2d # sImg the projection 2D, reshape from 
 		
 
-		img3d, style, condition = inputs # Split the input
+		vol3d, img2d, condition = inputs # Split the input
 
 		# Step 0; run thru 3d encoder
 		with tf.variable_scope('encoder_3d'):
-			img2d = self.vol3d_encoder(img3d)
-		
-
+			vol2d = self.vol3d_encoder(vol3d)
 		# Step 1: Run thru the encoder
 		with tf.variable_scope('encoder_vgg19_2d'):
+			vol2d_encoded, vol2d_feature = self.vgg19_encoder(vol2d)
 			img2d_encoded, img2d_feature = self.vgg19_encoder(img2d)
-			style_encoded, style_feature = self.vgg19_encoder(style)
-
 		# Step 2: Run thru the adain block to get t=AdIN(f(c), f(s))
 		with tf.variable_scope('style_transfer'):
-			merge_encoded = self._build_adain_layers(img2d_encoded, style_encoded)
+			merge_encoded = self._build_adain_layers(vol2d_encoded, img2d_encoded)
 			condition = tf.reshape(condition, []) # Make 0 rank for condition
 			chose_encoded = tf.cond(condition > 0, # if istest turns on, perform statistical transfering
 									lambda: tf.identity(merge_encoded), 
-									lambda: tf.identity(img2d_encoded)) #else get the img2d_encoded
-			style_encoded = tf.identity(style_encoded)
+									lambda: tf.identity(vol2d_encoded)) #else get the img2d_encoded
+			img2d_encoded = tf.identity(img2d_encoded)
 
 		# Step 3: Run thru the decoder to get the paint image
 		with tf.variable_scope('decoder_vgg19_2d'):
-			img2d_decoded = self.vgg19_decoder(chose_encoded)
-			style_decoded = self.vgg19_decoder(style_encoded)
+			vol2d_decoded = self.vgg19_decoder(chose_encoded)
+			img2d_decoded = self.vgg19_decoder(img2d_encoded)
 
 		with tf.variable_scope('decoder_3d'):
+			vol3d_decoded = self.vol3d_decoder(vol2d_decoded)
 			img3d_decoded = self.vol3d_decoder(img2d_decoded)
+
+		# Step 0; run thru 3d encoder
+		with tf.variable_scope('encoder_3d'):
+			img3d_encoded = self.vol3d_encoder(img3d_decoded)
 
 		#
 		# Build losses here
@@ -277,49 +342,62 @@ class Model(ModelDesc):
 		with tf.name_scope('losses'):
 			losses = []
 			# Content loss between t and f(g(t))
+			# loss_vol2d = tf.reduce_mean(tf.abs(vol2d - vol2d_decoded), name='loss_vol2d')
+			loss_vol3d = tf.reduce_mean(tf.abs(vol3d - vol3d_decoded), name='loss_vol3d')
+			loss_vol2d = tf.reduce_mean(tf.abs(vol2d - vol2d_decoded), name='loss_vol2d')
 			loss_img2d = tf.reduce_mean(tf.abs(img2d - img2d_decoded), name='loss_img2d')
-			loss_img3d = tf.reduce_mean(tf.abs(img3d - img3d_decoded), name='loss_img3d')
-			loss_style = tf.reduce_mean(tf.abs(style - style_decoded), name='loss_style')
+			loss_img3d = tf.reduce_mean(tf.abs(img2d - img3d_encoded), name='loss_img3d')
+			# loss_img3d = tf.reduce_mean(tf.abs(img3d - img3d_decoded), name='loss_img3d')
 
+
+			add_moving_summary(loss_vol3d)
+			add_moving_summary(loss_vol2d)
 			add_moving_summary(loss_img2d)
 			add_moving_summary(loss_img3d)
-			add_moving_summary(loss_style)
 
-			losses.append(2e2*loss_img2d)
+
+			losses.append(1e0*loss_vol3d)
+			losses.append(2e0*loss_vol2d)
+			losses.append(2e0*loss_img2d)
 			losses.append(1e0*loss_img3d)
-			losses.append(2e2*loss_style)
 		self.cost = tf.reduce_sum(losses, name='self.cost')
 		add_moving_summary(self.cost)
 
-		# with tf.name_scope('visualization'):
-		mid=128
-		viz_img3d_1 = img3d[mid-2:mid-1,...]
-		viz_img3d_2 = img3d[mid-1:mid-0,...]
-		viz_img3d_3 = img3d[mid+0:mid+1,...]
-		viz_img3d_4 = img3d[mid+1:mid+2,...]
+		with tf.name_scope('visualization'):
+			mid=128
+			viz_vol_0 = vol3d[mid-2:mid-1,...]
+			viz_vol_1 = vol3d[mid-1:mid-0,...]
+			viz_vol_2 = vol3d[mid+0:mid+1,...]
+			viz_vol_3 = vol3d[mid+1:mid+2,...]
 
-		viz_img3d_decoded_1 = img3d_decoded[mid-2:mid-1,...]
-		viz_img3d_decoded_2 = img3d_decoded[mid-1:mid-0,...]
-		viz_img3d_decoded_3 = img3d_decoded[mid+0:mid+1,...]
-		viz_img3d_decoded_4 = img3d_decoded[mid+1:mid+2,...]
+			viz_vol_4 = vol3d_decoded[mid-2:mid-1,...]
+			viz_vol_5 = vol3d_decoded[mid-1:mid-0,...]
+			viz_vol_6 = vol3d_decoded[mid+0:mid+1,...]
+			viz_vol_7 = vol3d_decoded[mid+1:mid+2,...]
 
-		viz_style 		  = style
-		viz_style_decoded = style_decoded
+			viz_vol_8 = vol2d
+			viz_vol_9 = vol2d_decoded
+			####
+			viz_img_0 = img3d_decoded[mid-2:mid-1,...]
+			viz_img_1 = img3d_decoded[mid-1:mid-0,...]
+			viz_img_2 = img3d_decoded[mid+0:mid+1,...]
+			viz_img_3 = img3d_decoded[mid+1:mid+2,...]
 
-		viz_img2d 		  = img2d
-		viz_img2d_decoded = img2d_decoded
-		# Visualization
-		viz = tf.concat([tf.concat([viz_img3d_1, viz_img3d_2, viz_img3d_3, viz_img3d_4, viz_img2d, viz_style], 2), 
-						 tf.concat([viz_img3d_decoded_1, viz_img3d_decoded_2, viz_img3d_decoded_3, viz_img3d_decoded_4, viz_img2d_decoded, viz_style_decoded], 2), 
-						 ], 1)
-		# viz = tf.concat([tf.concat([viz_img3d_1, viz_img3d_decoded_1], 2), 
-		# 				 tf.concat([viz_img3d_2, viz_img3d_decoded_2], 2), 
-		# 				 tf.concat([viz_img3d_3, viz_img3d_decoded_3], 2), 
-		# 				 tf.concat([viz_img3d_4, viz_img3d_decoded_4], 2), 
-		# 				 tf.concat([viz_style  , viz_style_decoded], 2), 
-		# 				 ], 1)
-		viz = tf.cast(tf.clip_by_value(viz, 0, 255), tf.uint8, name='viz')
-		tf.summary.image('colorized', viz, max_outputs=50)
+
+			viz_img_4 = img2d
+			viz_img_5 = img2d_decoded
+			viz_img_6 = img3d_encoded
+
+
+			viz_zeros = tf.zeros_like(img2d)
+			# Visualization
+			viz = tf.concat([tf.concat([viz_vol_0, viz_vol_1, viz_vol_2, viz_vol_3, viz_vol_8, viz_img_4], 2), 
+							 tf.concat([viz_vol_4, viz_vol_5, viz_vol_6, viz_vol_7, viz_vol_9, viz_img_5], 2), 
+							 tf.concat([viz_img_0, viz_img_1, viz_img_2, viz_img_3, viz_img_6, viz_img_4], 2), 
+							 ], 1)
+
+			viz = tf.cast(tf.clip_by_value(viz, 0, 255), tf.uint8, name='viz')
+			tf.summary.image('colorized', viz, max_outputs=50)
 
 	def _get_optimizer(self):
 		lr  = tf.get_variable('learning_rate', initializer=2e-4, trainable=False)
@@ -520,7 +598,7 @@ def render(model_path, volume_path, style_path):
 class VisualizeRunner(Callback):
 	def _setup_graph(self):
 		self.pred = self.trainer.get_predictor(
-			['image', 'style', 'condition'], ['viz'])
+			['image', 'style', 'condition'], ['visualization/viz'])
 
 	def _before_train(self):
 		global args
