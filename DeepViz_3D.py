@@ -110,52 +110,51 @@ class Model(ModelDesc):
 			return results
 
 	
-	# @auto_reuse_variable_scope
-	# def vol3d_encoder(self, x, name='Vol3D_Encoder'):
-	# 	# with varreplace.freeze_variables():
-	# 		with argscope([Conv2D], kernel_shape=3, nl=INLReLU):
-	# 			x = tf.transpose(x, [3, 1, 2, 0]) # from z y x c to c y x z
-	# 			x = tf_2tanh(x)
-	# 			x = (LinearWrap(x)
-	# 					.Conv2D('conv1', DIMZ/2,   padding='SAME') # 128
-	# 					.Conv2D('conv2', DIMZ/4,   padding='SAME') # 64				
-	# 					.Conv2D('conv3', DIMZ/8,   padding='SAME') # 32
-	# 					.Conv2D('conv4', DIMZ/16,  padding='SAME') # 16
-	# 					.Conv2D('conv5', DIMZ/32,  padding='SAME') # 8
-	# 					.Conv2D('conv6', DIMZ/64,  padding='SAME') # 4
-	# 					.Conv2D('conv7', DIMZ/128, padding='SAME') # 2
-	# 					.Conv2D('conv8', DIMZ/256, padding='SAME', nl=tf.nn.tanh) # 1
-	# 					())
-	# 			x = tf.transpose(x, [3, 1, 2, 0]) # from c y x 1 to 1 y x c
-	# 			x = tf_2imag(x, maxVal=255.0)
-	# 			return x
-	
-	# @auto_reuse_variable_scope
-	# def vol3d_decoder(self, x, name='Vol3D_Decoder'):
-	# 	# with varreplace.freeze_variables():
-	# 		with argscope([Conv2D], kernel_shape=3, nl=BNLReLU):
-	# 			x = tf.transpose(x, [3, 1, 2, 0]) # from 1 y x c to c y x 1
-	# 			x = tf_2tanh(x)
-	# 			x = (LinearWrap(x)
-	# 					.Subpix2D('conv7', DIMZ/128,scale=1, ) # 2
-	# 					.Subpix2D('conv6', DIMZ/64, scale=1, ) # 4
-	# 					.Subpix2D('conv5', DIMZ/32, scale=1, ) # 8
-	# 					.Subpix2D('conv4', DIMZ/16, scale=1, ) # 16
-	# 					.Subpix2D('conv3', DIMZ/8,  scale=1, ) # 32
-	# 					.Subpix2D('conv2', DIMZ/4,  scale=1, ) # 64				
-	# 					.Subpix2D('conv1', DIMZ/2,  scale=1, ) # 128
-	# 					.Subpix2D('conv0', DIMZ/1,  scale=1, nl=tf.nn.tanh) # 128
-	# 					())
-	# 			x = tf.transpose(x, [3, 1, 2, 0]) # from c y x z to z y x c
-	# 			x = tf_2imag(x)
-	# 			return x
 
+	@auto_reuse_variable_scope
+	def vol3d_encoder(self, x, name='Vol3D_Encoder'):
+		# with varreplace.freeze_variables():
+			with argscope([Conv2D], kernel_shape=3, nl=BNLReLU):
+				x = tf.transpose(x, [3, 1, 2, 0]) # from z y x c to c y x z
+				x = tf_2tanh(x)
+				x = (LinearWrap(x)
+						.Conv2D('conv1', DIMZ/2,   padding='SAME') # 128
+						.Conv2D('conv2', DIMZ/4,   padding='SAME') # 64				
+						.Conv2D('conv3', DIMZ/8,   padding='SAME') # 32
+						.Conv2D('conv4', DIMZ/16,  padding='SAME') # 16
+						.Conv2D('conv5', DIMZ/32,  padding='SAME') # 8
+						.Conv2D('conv6', DIMZ/64,  padding='SAME') # 4
+						.Conv2D('conv7', DIMZ/128, padding='SAME') # 2
+						.Conv2D('conv8', DIMZ/256, padding='SAME', nl=tf.nn.tanh) # 1
+						())
+				x = tf.transpose(x, [3, 1, 2, 0]) # from c y x 1 to 1 y x c
+				x = tf_2imag(x, maxVal=255.0)
+				return x
+	@auto_reuse_variable_scope
+	def vol3d_decoder(self, x, name='Vol3D_Decoder'):
+		# with varreplace.freeze_variables():
+			with argscope([Conv2D], kernel_shape=3, nl=BNLReLU):
+				x = tf.transpose(x, [3, 1, 2, 0]) # from 1 y x c to c y x 1
+				x = tf_2tanh(x)
+				x = (LinearWrap(x)
+						.Subpix2D('conv7', DIMZ/128,scale=1, ) # 2
+						.Subpix2D('conv6', DIMZ/64, scale=1, ) # 4
+						.Subpix2D('conv5', DIMZ/32, scale=1, ) # 8
+						.Subpix2D('conv4', DIMZ/16, scale=1, ) # 16
+						.Subpix2D('conv3', DIMZ/8,  scale=1, ) # 32
+						.Subpix2D('conv2', DIMZ/4,  scale=1, ) # 64				
+						.Subpix2D('conv1', DIMZ/2,  scale=1, ) # 128
+						.Subpix2D('conv0', DIMZ/1,  scale=1, nl=tf.nn.tanh) # 128
+						())
+				x = tf.transpose(x, [3, 1, 2, 0]) # from c y x z to z y x c
+				x = tf_2imag(x)
+				return x
 
 	@auto_reuse_variable_scope
 	def vgg19_encoder(self, inputs, name='VGG19_Encoder'):
-		inputs  = inputs - VGG19_MEAN_TENSOR
-		with argscope([Conv2D], kernel_shape=3, nl=tf.nn.relu):
-			with varreplace.freeze_variables():
+		with varreplace.freeze_variables():
+			with argscope([Conv2D], kernel_shape=3, nl=tf.nn.relu):
+				inputs  = inputs - VGG19_MEAN_TENSOR
 				conv1_1 = Conv2D('conv1_1', inputs,  64)
 				conv1_2 = Conv2D('conv1_2', conv1_1, 64)
 				pool1 = MaxPooling('pool1', conv1_2, 2)  # 64
@@ -180,10 +179,10 @@ class Model(ModelDesc):
 				return normalize(conv4_1), [conv1_1, conv2_1, conv3_1, conv4_1]
 
 	@auto_reuse_variable_scope
-	def vgg19_decoder(self, inputs, nl=INLReLU, last_dim=3, name='VGG19_Decoder'):
-		with tf.variable_scope(name):
-			with argscope([Conv2D], kernel_shape=3, nl=nl):	
-				with argscope([Deconv2D], kernel_shape=3, strides=(2,2), nl=nl):
+	def vgg19_decoder(self, inputs, name='VGG19_Decoder'):
+		# with varreplace.freeze_variables():
+			with argscope([Conv2D], kernel_shape=3, nl=INLReLU):	
+				with argscope([Deconv2D], kernel_shape=3, strides=(2,2), nl=INLReLU):
 					# conv4_1 = Conv2D('conv4_1', conv4_2, 512)
 					pool3 = Subpix2D('pool3',   inputs,  256)  # 16
 					conv3_4 = Conv2D('conv3_4', pool3,   256)
@@ -196,25 +195,9 @@ class Model(ModelDesc):
 					pool1 = Subpix2D('pool1',   conv2_1, 64)  # 64
 					conv1_2 = Conv2D('conv1_2', pool1, 	 64)
 					conv1_1 = Conv2D('conv1_1', conv1_2, 64)
-					conv1_0 = Conv2D('conv1_0', conv1_1, last_dim)
-					if last_dim != 3:
-						conv1_0 = tf.reshape(conv1_0, [-1, DIMY, DIMX, 3])
+					conv1_0 = Conv2D('conv1_0', conv1_1, 3)
 					conv1_0 = conv1_0 + VGG19_MEAN_TENSOR
 					return conv1_0 # List of feature maps
-
-	@auto_reuse_variable_scope
-	def vol3d_encoder(self, x, name='Vol3D_Encoder'):
-		x, _ = self.vgg19_encoder(x) # from 256x256x256x3 to 256x32x32x256
-		x  = tf.reduce_mean(x, axis=0, keepdims=True)
-		x  = self.vgg19_decoder(x, last_dim=3, name=name, nl=BNLReLU)
-		return x
-
-	@auto_reuse_variable_scope
-	def vol3d_decoder(self, x, name='Vol3D_Decoder'):
-		x  = tf.tile(x, [DIMZ, 1, 1, 1])
-		x, _ = self.vgg19_encoder(x) # from 256x256x256x3 to 256x32x32x256
-		x  = self.vgg19_decoder(x, last_dim=3, name=name, nl=BNLReLU)
-		return x
 
 	def _get_inputs(self):
 		return [
@@ -278,8 +261,8 @@ class Model(ModelDesc):
 			add_moving_summary(loss_img3d)
 
 
-			losses.append(1e0*loss_vol3d)
-			losses.append(2e0*loss_vol2d)
+			losses.append(2e0*loss_vol3d)
+			losses.append(1e0*loss_vol2d)
 			losses.append(2e0*loss_img2d)
 			losses.append(1e0*loss_img3d)
 		self.cost = tf.reduce_sum(losses, name='self.cost')
@@ -386,13 +369,13 @@ class ImageDataFlow(RNGDataFlow):
 
 				# Style augmentation
 				style = self.central_crop(style)
-				is_random_crop = self.rng.randint(0, 2)
+				is_random_crop = self.rng.randint(0, 2) # 50% of cropping
 				if is_random_crop:
 					style = self.resize_image(style, size=512)
 					style = self.random_crop (style, size=256)
 				else: 
 					style = self.resize_image(style, size=256)
-				
+
 			elif self.isValid:
 				# Read image
 				rand_image = self.rng.randint(0, len(images))
@@ -655,4 +638,4 @@ if __name__ == '__main__':
 			)
 	
 		# Train the model
-		SyncMultiGPUTrainerReplicated(config).train()
+		SyncMultiGPUTrainer(config).train()
