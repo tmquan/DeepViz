@@ -396,7 +396,7 @@ class ImageDataFlow(RNGDataFlow):
 				image = skimage.io.imread(images[rand_image])
 				style = cv2.imread(styles[rand_style], cv2.IMREAD_COLOR)
 				style = style[...,::-1] # BGR to RGB
-				
+
 				image = self.random_pad(image, symmetry=True)
 				# Style augmentation
 				style = self.central_crop(style)
@@ -571,7 +571,7 @@ class VisualizeRunner(Callback):
 
 			#print viz_valid.shape
 
-			self.trainer.monitors.put_image('viz_valid', viz_valid[...,::-1])
+			self.trainer.monitors.put_image('viz_valid', viz_valid[...,::1])
 ###################################################################################################
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
@@ -641,4 +641,7 @@ if __name__ == '__main__':
 			)
 	
 		# Train the model
-		SyncMultiGPUTrainer(config).train()
+		# SyncMultiGPUTrainer(config).train()
+		launch_train_with_config(
+            config,
+            SyncMultiGPUTrainer(max(get_nr_gpu(), 1)))
