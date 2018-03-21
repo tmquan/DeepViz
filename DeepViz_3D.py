@@ -45,7 +45,7 @@ DIMY  = 256
 DIMZ  = 256
 SIZE  = 256 # For resize
 
-EPOCH_SIZE = 20
+EPOCH_SIZE = 2000
 BATCH_SIZE = 1
 NB_FILTERS = 32
 
@@ -450,8 +450,8 @@ class ImageDataFlow(RNGDataFlow):
 
 			if self.isTrain:
 				# Read image
-				rand_image = np.random.randint(0, len(images))
-				rand_style = np.random.randint(0, len(styles))
+				rand_image = self.rng.random.randint(0, len(images))
+				rand_style = self.rng.random.randint(0, len(styles))
 				image = skimage.io.imread(images[rand_image])
 				style = cv2.imread(styles[rand_style], cv2.IMREAD_COLOR)
 
@@ -468,8 +468,8 @@ class ImageDataFlow(RNGDataFlow):
 				style = self.random_crop (style, size=256)
 			elif self.isValid:
 				# Read image
-				rand_image = np.random.randint(0, len(images))
-				rand_style = np.random.randint(0, len(styles))
+				rand_image = self.rng.random.randint(0, len(images))
+				rand_style = self.rng.random.randint(0, len(styles))
 				image = skimage.io.imread(images[rand_image])
 				style = cv2.imread(styles[rand_style], cv2.IMREAD_COLOR)
 
@@ -479,8 +479,8 @@ class ImageDataFlow(RNGDataFlow):
 				style = self.resize_image(style, size=256)
 			elif self.isTest:
 				# Read image
-				rand_image = np.random.randint(0, len(images))
-				rand_style = np.random.randint(0, len(styles))
+				rand_image = self.rng.random.randint(0, len(images))
+				rand_style = self.rng.random.randint(0, len(styles))
 				image = skimage.io.imread(images[rand_image])
 				style = cv2.imread(styles[rand_style], cv2.IMREAD_COLOR)
 
