@@ -90,9 +90,6 @@ def BNLReLU(x, name=None):
 def Subpix2D(inputs, chan, scale=2, stride=1, nl=tf.nn.leaky_relu):
 	with argscope([Conv2D], nl=nl, stride=stride, kernel_shape=3):
 		results = Conv2D('conv0', inputs, chan* scale**2, padding='SAME')
-		old_shape = inputs.get_shape().as_list()
-		# results = tf.reshape(results, [-1, chan, old_shape[2]*scale, old_shape[3]*scale])
-		# results = tf.reshape(results, [-1, old_shape[1]*scale, old_shape[2]*scale, chan])
 		if scale>1:
 			results = tf.depth_to_space(results, scale, name='depth2space', data_format='NHWC')
 		return results
@@ -604,19 +601,10 @@ if __name__ == '__main__':
 			session_init = SaverRestore(args.load)
 		else: # For training from scratch, read the vgg model from args.vgg19
 			assert os.path.isfile(args.vgg19)
-			# param_dict = dict(np.load(args.vgg19))
-			# param_dict = {'VGG19/' + name: value for name, value in six.iteritems(param_dict)} 
-			
-			# weight = h5py.File(args.vgg19, 'r')
-			# param_dict = {}
-			# param_dict.update({'VGG19_Encoder/' + name: value for name, value in six.iteritems( weight)})
-			# param_dict.update({'VGG19_Feature/' + name: value for name, value in six.iteritems( weight)})
-			# weight.close()
 
 			weight = dict(np.load(args.vgg19))
 			param_dict = {}
 			param_dict.update({'encoder_vgg19_2d/' + name: value for name, value in six.iteritems(weight)})
-			# print(param_dict)
 			session_init = DictRestore(param_dict)
 
 
