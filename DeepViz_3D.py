@@ -45,7 +45,7 @@ DIMY  = 256
 DIMZ  = 256
 SIZE  = 256 # For resize
 
-EPOCH_SIZE = 2000
+EPOCH_SIZE = 20
 BATCH_SIZE = 1
 NB_FILTERS = 32
 
@@ -69,9 +69,9 @@ def np_2imag(x, maxVal = 255.0, name='ToRangeImag'):
 	return (x / 2.0 + 0.5) * maxVal
 
 def normalize(v):
-    assert isinstance(v, tf.Tensor)
-    v.get_shape().assert_has_rank(4)
-    return v / tf.reduce_mean(v, axis=[1, 2, 3], keepdims=True)
+	assert isinstance(v, tf.Tensor)
+	v.get_shape().assert_has_rank(4)
+	return v / tf.reduce_mean(v, axis=[1, 2, 3], keepdims=True)
 ###################################################################################################
 def INReLU(x, name=None):
 	x = InstanceNorm('inorm', x)
@@ -86,20 +86,6 @@ def BNLReLU(x, name=None):
 	x = BatchNorm('bn', x)
 	return tf.nn.leaky_relu(x, name=name)
 ###############################################################################
-# FusionNet
-@layer_register(log_shape=True)
-def residual(x, chan, first=False):
-	with argscope([Conv2D], nl=INLReLU, stride=1, kernel_shape=3):
-		input = x
-		return (LinearWrap(x)
-				.Conv2D('conv1', chan, padding='SAME', dilation_rate=1)
-				.Conv2D('conv2', chan, padding='SAME', dilation_rate=2)
-				.Conv2D('conv4', chan, padding='SAME', dilation_rate=4)				
-				.Conv2D('conv5', chan, padding='SAME', dilation_rate=8)
-				.Conv2D('conv0', chan, padding='SAME', nl=tf.identity)
-				.InstanceNorm('inorm')()) + input
-
-###############################################################################
 @layer_register(log_shape=True)
 def Subpix2D(inputs, chan, scale=2, stride=1, nl=tf.nn.leaky_relu):
 	with argscope([Conv2D], nl=nl, stride=stride, kernel_shape=3):
@@ -110,51 +96,6 @@ def Subpix2D(inputs, chan, scale=2, stride=1, nl=tf.nn.leaky_relu):
 		if scale>1:
 			results = tf.depth_to_space(results, scale, name='depth2space', data_format='NHWC')
 		return results
-
-###############################################################################
-@layer_register(log_shape=True)
-def residual_enc(x, chan, first=False):
-	with argscope([Conv2D, Deconv2D], nl=INLReLU, stride=1, kernel_shape=3):
-		x = (LinearWrap(x)
-			# .Dropout('drop', 0.75)
-			.Conv2D('conv_i', chan, stride=2) 
-			.residual('res_', chan, first=True)
-			.Conv2D('conv_o', chan, stride=1) 
-			())
-		return x
-
-###############################################################################
-@layer_register(log_shape=True)
-def residual_dec(x, chan, first=False):
-	with argscope([Conv2D, Deconv2D], nl=INLReLU, stride=1, kernel_shape=3):
-				
-		x = (LinearWrap(x)
-			.Subpix2D('deconv_i', chan, scale=1) 
-			.residual('res2_', chan, first=True)
-			.Subpix2D('deconv_o', chan, scale=2) 
-			# .Dropout('drop', 0.75)
-			())
-		return x
-
-###############################################################################
-@auto_reuse_variable_scope
-def fusionNet(img, last_dim=1):
-	assert img is not None
-	with argscope([Conv2D, Deconv2D], nl=INLReLU, kernel_shape=3, stride=2, padding='SAME'):
-		e0 = residual_enc('e0', img, NB_FILTERS*1)
-		e1 = residual_enc('e1',  e0, NB_FILTERS*2)
-		e2 = residual_enc('e2',  e1, NB_FILTERS*4)
-
-		e3 = residual_enc('e3',  e2, NB_FILTERS*8)
-		# e3 = Dropout('dr', e3, 0.5)
-
-		d3 = residual_dec('d3',    e3, NB_FILTERS*4)
-		d2 = residual_dec('d2', d3+e2, NB_FILTERS*2)
-		d1 = residual_dec('d1', d2+e1, NB_FILTERS*1)
-		d0 = residual_dec('d0', d1+e0, NB_FILTERS*1) 
-		dd =  (LinearWrap(d0)
-				.Conv2D('convlast', last_dim, kernel_shape=3, stride=1, padding='SAME', nl=tf.tanh, use_bias=True) ())
-		return dd, d0
 ###################################################################################################
 class Model(ModelDesc):
 	def _build_adain_layers(self, content, style, eps=1e-6, name='adain', is_normalized=True):
@@ -171,38 +112,7 @@ class Model(ModelDesc):
 				results = normalize(results)
 			return results
 
-	def _build_content_loss(self, current, target, weight=1.0, is_normalized=False):
-		if is_normalized:
-			current = normalize(current)
-			target  = normalize(target)
-		loss = tf.reduce_mean(tf.squared_difference(current, target))
-		return loss*weight
-
-	def _build_style_losses(self, current_layers, target_layers, weight=1.0, eps=1e-6, is_normalized=False):
-		losses = []
-		# for layer in current_layers:
-		for current, target in zip(current_layers, target_layers):
-			if is_normalized:
-				current = normalize(current)
-				target  = normalize(target)
-
-			current_mean, current_var = tf.nn.moments(current, axes=[1,2], keep_dims=True) # Normalize to 2,3 is for NCHW; 1,2 is for NHWC
-			current_std = tf.sqrt(current_var + eps)
-
-			target_mean, target_var   = tf.nn.moments(target,  axes=[1,2], keep_dims=True) # Normalize to 2,3 is for NCHW; 1,2 is for NHWC
-			target_std = tf.sqrt(target_var + eps)
-
-			mean_loss = tf.reduce_sum(tf.squared_difference(current_mean, target_mean))
-			std_loss  = tf.reduce_sum(tf.squared_difference(current_std, target_std))
-
-			# normalize w.r.t batch size
-			n = tf.cast(tf.shape(current)[0], dtype=tf.float32)
-			mean_loss /= n
-			std_loss  /= n
-
-			# losses[layer] = (mean_loss + std_loss) * weight
-			losses.append((mean_loss + std_loss) * weight)
-		return losses
+	
 
 	@auto_reuse_variable_scope
 	def vol3d_encoder(self, x, name='Vol3D_Encoder'):
@@ -220,7 +130,6 @@ class Model(ModelDesc):
 						.Conv2D('conv7', DIMZ/128, padding='SAME') # 2
 						.Conv2D('conv8', DIMZ/256, padding='SAME', nl=tf.nn.tanh) # 1
 						())
-				# x, _ = fusionNet(x, last_dim=1)
 				x = tf.transpose(x, [3, 1, 2, 0]) # from c y x 1 to 1 y x c
 				x = tf_2imag(x, maxVal=255.0)
 				return x
@@ -240,7 +149,6 @@ class Model(ModelDesc):
 						.Subpix2D('conv1', DIMZ/2,  scale=1, ) # 128
 						.Subpix2D('conv0', DIMZ/1,  scale=1, nl=tf.nn.tanh) # 128
 						())
-				# x, _ = fusionNet(x, last_dim=DIMZ)
 				x = tf.transpose(x, [3, 1, 2, 0]) # from c y x z to z y x c
 				x = tf_2imag(x)
 				return x
@@ -630,6 +538,7 @@ def get_data(image_path, style_path, size=EPOCH_SIZE):
 	# ds_valid = BatchData(ds_valid, BATCH_SIZE)
 
 	ds_train = PrefetchDataZMQ(ds_train, 4)
+	ds_valid = PrefetchDataZMQ(ds_valid, 2)
 	return ds_train, ds_valid
 
 ###################################################################################################
@@ -638,16 +547,20 @@ def render(model_path, volume_path, style_path):
 
 
 class VisualizeRunner(Callback):
+	def __init__(self, input, tower_name='InferenceTower', device=0):
+		self.dset = input 
+		self._tower_name = tower_name
+		self._device = device
+
 	def _setup_graph(self):
 		self.pred = self.trainer.get_predictor(
 			['image', 'style', 'condition'], ['visualization/viz'])
 
 	def _before_train(self):
-		global args
-		self.ds_train, self.ds_valid = get_data(args.image_path, args.style_path)
+		pass 
 
 	def _trigger(self):
-		for lst in self.ds_valid.get_data():
+		for lst in self.dset.get_data():
 			viz_valid = self.pred(lst)
 			viz_valid = np.squeeze(np.array(viz_valid))
 
@@ -714,8 +627,14 @@ if __name__ == '__main__':
 			model           =   model, 
 			dataflow        =   ds_train,
 			callbacks       =   [
-				PeriodicTrigger(ModelSaver(), every_k_epochs=50),
-				PeriodicTrigger(VisualizeRunner(), every_k_epochs=1),
+				PeriodicTrigger(ModelSaver(), every_k_epochs=10),
+				PeriodicTrigger(VisualizeRunner(ds_valid), every_k_epochs=1),
+				PeriodicTrigger(InferenceRunner(ds_valid, [ScalarStats('losses/loss_img3d'), 
+														   ScalarStats('losses/loss_img2d'), 
+														   ScalarStats('losses/loss_vol2d'), 
+														   ScalarStats('losses/loss_vol3d'), 
+														   ScalarStats('self.cost'), 
+														   ]), every_k_epochs=1),
 				ScheduledHyperParamSetter('learning_rate', [(0, 2e-4), (100, 1e-4), (200, 1e-5), (300, 1e-6)], interp='linear')
 				#ScheduledHyperParamSetter('learning_rate', [(30, 6e-6), (45, 1e-6), (60, 8e-7)]),
 				#HumanHyperParamSetter('learning_rate'),
