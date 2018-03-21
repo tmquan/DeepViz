@@ -205,15 +205,15 @@ class Model(ModelDesc):
 	@auto_reuse_variable_scope
 	def vol3d_encoder(self, x, name='Vol3D_Encoder'):
 		x, _ = self.vgg19_encoder(x) # from 256x256x256x3 to 256x32x32x256
-		x = tf.reshape(x, [1, 32, 32, -1])
-		x = Conv2D('conv_map', x, 2048, kernel_shape=1)
-		x  = self.vgg19_decoder(x, last_dim=3, 		name=name, nl=BNLReLU)
+		x  = tf.reduce_mean(x, axis=0, keepdims=True)
+		x  = self.vgg19_decoder(x, last_dim=3, name=name, nl=BNLReLU)
 		return x
 
 	@auto_reuse_variable_scope
 	def vol3d_decoder(self, x, name='Vol3D_Decoder'):
+		x  = tf.tile(x, [DIMZ, 1, 1, 1])
 		x, _ = self.vgg19_encoder(x) # from 256x256x256x3 to 256x32x32x256
-		x  = self.vgg19_decoder(x, last_dim=3*DIMZ, name=name, nl=BNLReLU)
+		x  = self.vgg19_decoder(x, last_dim=3, name=name, nl=BNLReLU)
 		return x
 
 	def _get_inputs(self):
@@ -386,8 +386,13 @@ class ImageDataFlow(RNGDataFlow):
 
 				# Style augmentation
 				style = self.central_crop(style)
-				style = self.resize_image(style, size=512)
-				style = self.random_crop (style, size=256)
+				is_random_crop = self.rng.randint(0, 2)
+				if is_random_crop:
+					style = self.resize_image(style, size=512)
+					style = self.random_crop (style, size=256)
+				else: 
+					style = self.resize_image(style, size=256)
+				
 			elif self.isValid:
 				# Read image
 				rand_image = self.rng.randint(0, len(images))
