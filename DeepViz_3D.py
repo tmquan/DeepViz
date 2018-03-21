@@ -539,7 +539,7 @@ def get_data(image_path, style_path, size=EPOCH_SIZE):
 	# ds_train = BatchData(ds_train, BATCH_SIZE)
 	# ds_valid = BatchData(ds_valid, BATCH_SIZE)
 
-	ds_train = PrefetchDataZMQ(ds_train, 2)
+	ds_train = PrefetchDataZMQ(ds_train, 4)
 	# ds_valid = PrefetchDataZMQ(ds_valid, 2)
 	return ds_train, ds_valid
 
