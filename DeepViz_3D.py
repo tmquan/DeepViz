@@ -655,4 +655,4 @@ if __name__ == '__main__':
 			)
 	
 		# Train the model
-		SyncMultiGPUTrainer(config).train()
+		SyncMultiGPUTrainerReplicated(config).train()
