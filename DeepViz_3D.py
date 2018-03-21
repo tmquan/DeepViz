@@ -359,7 +359,7 @@ class ImageDataFlow(RNGDataFlow):
 				rand_style = self.rng.randint(0, len(styles))
 				image = skimage.io.imread(images[rand_image])
 				style = cv2.imread(styles[rand_style], cv2.IMREAD_COLOR)
-				style = style[...,::-1] # BGR to RGB
+				style = cv2.cvtColor(style, cv2.COLOR_BGR2RGB) # BGR to RGB
 
 				# Image augmentation
 				image = self.random_flip(image)
@@ -383,7 +383,7 @@ class ImageDataFlow(RNGDataFlow):
 				rand_style = self.rng.randint(0, len(styles))
 				image = skimage.io.imread(images[rand_image])
 				style = cv2.imread(styles[rand_style], cv2.IMREAD_COLOR)
-				style = style[...,::-1] # BGR to RGB
+				style = cv2.cvtColor(style, cv2.COLOR_BGR2RGB) # BGR to RGB
 
 				image = self.random_pad(image, symmetry=True)
 				# Style augmentation
@@ -395,7 +395,7 @@ class ImageDataFlow(RNGDataFlow):
 				rand_style = self.rng.randint(0, len(styles))
 				image = skimage.io.imread(images[rand_image])
 				style = cv2.imread(styles[rand_style], cv2.IMREAD_COLOR)
-				style = style[...,::-1] # BGR to RGB
+				style = cv2.cvtColor(style, cv2.COLOR_BGR2RGB) # BGR to RGB
 
 				image = self.random_pad(image, symmetry=True)
 				# Style augmentation
