@@ -263,7 +263,7 @@ class Model(ModelDesc):
 
 			losses.append(1e1*loss_vol3d)
 			losses.append(1e0*loss_vol2d)
-			losses.append(1e0*loss_img2d)
+			losses.append(1e1*loss_img2d)
 			losses.append(1e1*loss_img3d)
 		self.cost = tf.reduce_sum(losses, name='self.cost')
 		add_moving_summary(self.cost)
