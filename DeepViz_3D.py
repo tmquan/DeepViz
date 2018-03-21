@@ -45,7 +45,7 @@ DIMY  = 256
 DIMZ  = 256
 SIZE  = 256 # For resize
 
-EPOCH_SIZE = 20
+EPOCH_SIZE = 200
 BATCH_SIZE = 1
 NB_FILTERS = 32
 
@@ -537,8 +537,8 @@ def get_data(image_path, style_path, size=EPOCH_SIZE):
 	# ds_train = BatchData(ds_train, BATCH_SIZE)
 	# ds_valid = BatchData(ds_valid, BATCH_SIZE)
 
-	ds_train = PrefetchDataZMQ(ds_train, 4)
-	ds_valid = PrefetchDataZMQ(ds_valid, 2)
+	ds_train = PrefetchDataZMQ(ds_train, 2)
+	# ds_valid = PrefetchDataZMQ(ds_valid, 2)
 	return ds_train, ds_valid
 
 ###################################################################################################
