@@ -45,7 +45,7 @@ DIMY  = 256
 DIMZ  = 256
 SIZE  = 256 # For resize
 
-EPOCH_SIZE = 10
+EPOCH_SIZE = 20
 BATCH_SIZE = 1
 NB_FILTERS = 32
 
@@ -207,7 +207,7 @@ class Model(ModelDesc):
 	@auto_reuse_variable_scope
 	def vol3d_encoder(self, x, name='Vol3D_Encoder'):
 		# with varreplace.freeze_variables():
-			with argscope([Conv2D], kernel_shape=3, nl=BNLReLU):
+			with argscope([Conv2D], kernel_shape=3, nl=INLReLU):
 				x = tf.transpose(x, [3, 1, 2, 0]) # from z y x c to c y x z
 				x = tf_2tanh(x)
 				x = (LinearWrap(x)
@@ -276,8 +276,8 @@ class Model(ModelDesc):
 	@auto_reuse_variable_scope
 	def vgg19_decoder(self, inputs, name='VGG19_Decoder'):
 		# with varreplace.freeze_variables():
-			with argscope([Conv2D], kernel_shape=3, nl=BNLReLU):	
-				with argscope([Deconv2D], kernel_shape=3, strides=(2,2), nl=BNLReLU):
+			with argscope([Conv2D], kernel_shape=3, nl=INLReLU):	
+				with argscope([Deconv2D], kernel_shape=3, strides=(2,2), nl=INLReLU):
 					# conv4_1 = Conv2D('conv4_1', conv4_2, 512)
 					pool3 = Subpix2D('pool3',   inputs,  256)  # 16
 					conv3_4 = Conv2D('conv3_4', pool3,   256)
@@ -629,7 +629,7 @@ def get_data(image_path, style_path, size=EPOCH_SIZE):
 	# ds_train = BatchData(ds_train, BATCH_SIZE)
 	# ds_valid = BatchData(ds_valid, BATCH_SIZE)
 
-	ds_train = PrefetchDataZMQ(ds_train, 2)
+	ds_train = PrefetchDataZMQ(ds_train, 4)
 	return ds_train, ds_valid
 
 ###################################################################################################
