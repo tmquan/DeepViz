@@ -45,7 +45,7 @@ DIMY  = 256
 DIMZ  = 256
 SIZE  = 256 # For resize
 
-EPOCH_SIZE = 10
+EPOCH_SIZE = 200
 BATCH_SIZE = 1
 NB_FILTERS = 32
 
@@ -214,35 +214,35 @@ class Model(ModelDesc):
 
 		vol3d, img2d, condition = inputs # Split the input
 
-		# with tf.variable_scope('gen'):
-		# Step 0; run thru 3d encoder
-		with tf.variable_scope('encoder_3d'):
-			vol2d = self.vol3d_encoder(vol3d)
-		# Step 1: Run thru the encoder
-		with tf.variable_scope('encoder_vgg19_2d'):
-			vol2d_encoded, vol2d_feature = self.vgg19_encoder(vol2d)
-			img2d_encoded, img2d_feature = self.vgg19_encoder(img2d)
-		# Step 2: Run thru the adain block to get t=AdIN(f(c), f(s))
-		with tf.variable_scope('style_transfer'):
-			merge_encoded = self._build_adain_layers(vol2d_encoded, img2d_encoded)
-			condition = tf.reshape(condition, []) # Make 0 rank for condition
-			chose_encoded = tf.cond(condition > 0, # if istest turns on, perform statistical transfering
-									lambda: tf.identity(merge_encoded), 
-									lambda: tf.identity(vol2d_encoded)) #else get the img2d_encoded
-			img2d_encoded = tf.identity(img2d_encoded)
+		with tf.variable_scope('gen'):
+			# Step 0; run thru 3d encoder
+			with tf.variable_scope('encoder_3d'):
+				vol2d = self.vol3d_encoder(vol3d)
+			# Step 1: Run thru the encoder
+			with tf.variable_scope('encoder_vgg19_2d'):
+				vol2d_encoded, vol2d_feature = self.vgg19_encoder(vol2d)
+				img2d_encoded, img2d_feature = self.vgg19_encoder(img2d)
+			# Step 2: Run thru the adain block to get t=AdIN(f(c), f(s))
+			with tf.variable_scope('style_transfer'):
+				merge_encoded = self._build_adain_layers(vol2d_encoded, img2d_encoded)
+				condition = tf.reshape(condition, []) # Make 0 rank for condition
+				chose_encoded = tf.cond(condition > 0, # if istest turns on, perform statistical transfering
+										lambda: tf.identity(merge_encoded), 
+										lambda: tf.identity(vol2d_encoded)) #else get the img2d_encoded
+				img2d_encoded = tf.identity(img2d_encoded)
 
-		# Step 3: Run thru the decoder to get the paint image
-		with tf.variable_scope('decoder_vgg19_2d'):
-			vol2d_decoded = self.vgg19_decoder(chose_encoded)
-			img2d_decoded = self.vgg19_decoder(img2d_encoded)
+			# Step 3: Run thru the decoder to get the paint image
+			with tf.variable_scope('decoder_vgg19_2d'):
+				vol2d_decoded = self.vgg19_decoder(chose_encoded)
+				img2d_decoded = self.vgg19_decoder(img2d_encoded)
 
-		with tf.variable_scope('decoder_3d'):
-			vol3d_decoded = self.vol3d_decoder(vol2d_decoded)
-			img3d_decoded = self.vol3d_decoder(img2d_decoded)
+			with tf.variable_scope('decoder_3d'):
+				vol3d_decoded = self.vol3d_decoder(vol2d_decoded)
+				img3d_decoded = self.vol3d_decoder(img2d_decoded)
 
-		# Step 0; run thru 3d encoder
-		with tf.variable_scope('encoder_3d'):
-			img3d_encoded = self.vol3d_encoder(img3d_decoded)
+			# Step 0; run thru 3d encoder
+			with tf.variable_scope('encoder_3d'):
+				img3d_encoded = self.vol3d_encoder(img3d_decoded)
 
 		#
 		# Build losses here
@@ -264,10 +264,10 @@ class Model(ModelDesc):
 			add_moving_summary(loss_img3d)
 
 
-			losses.append(1e1*loss_vol3d)
-			losses.append(1e0*loss_vol2d)
-			losses.append(1e1*loss_img2d)
-			losses.append(1e1*loss_img3d)
+			losses.append(1e0*loss_vol3d)
+			# losses.append(1e0*loss_vol2d)
+			# losses.append(1e1*loss_img2d)
+			losses.append(1e0*loss_img3d)
 		self.cost = tf.reduce_sum(losses, name='self.cost')
 		add_moving_summary(self.cost)
 
@@ -570,73 +570,14 @@ def get_data(image_path, style_path, size=EPOCH_SIZE):
 	# ds_train = BatchData(ds_train, BATCH_SIZE)
 	# ds_valid = BatchData(ds_valid, BATCH_SIZE)
 
-	ds_train = PrefetchDataZMQ(ds_train, 4)
+	ds_train = PrefetchDataZMQ(ds_train, 2)
 	# ds_valid = PrefetchDataZMQ(ds_valid, 2)
 	return ds_train, ds_valid, ds_test2
 
 ###################################################################################################
 def render(model_path, image_path, style_path):
 	pass
-	# # print(sys.argv)
-
-	# # ds_valid = ImageDataFlow(image_path=image_path.replace('train','valid'),
-	# # 						 style_path=style_path.replace('train','valid'), 
-	# # 						 size=1, 
-	# # 						 isValid=True
-	# # 						 )
-	# # # print(ds_valid)
-	# # ds_valid = PrintData(ds_valid, num=5)	
-	# # ds_valid = PrefetchDataZMQ(ds_valid, 2)
-
-	# images = glob.glob(image_path + '/*.tif')
-	# images = natsorted(images)
-	# styles = glob.glob(style_path + '/*.jpg')
-	# styles = natsorted(styles)
-
-	# # # Create results directory
-	# # resultDir='result/'
-
-	# # import shutil
-	# # shutil.rmtree(resultDir, ignore_errors=True)
-	# # os.makedirs(resultDir)
-
-
-	# predict_func = OfflinePredictor(PredictConfig(
-	# 	model=Model(),
-	# 	session_init=get_model_loader(model_path),
-	# 	input_names=['image', 'style', 'condition'],
-	# 	# output_names=['out_vol3d', 'out_vol3d_decoded'])
-	# 	output_names=['losses/loss_vol2d']
-	# 	)
-	# )
-
-	# # pred_config = PredictConfig(
-	# # 	session_init=SaverRestore(model_path), #session_init=SaverRestore(args.load)
-	# # 	model=Model(),
-	# # 	input_names=['image', 'style', 'condition'],
-	# # 	output_names=['out_vol3d', 'out_vol3d_decoded'])
-
-	# # if True:
-	# # 	## Extract stack of images with SimpleDatasetPredictor
-	# # 	pred = SimpleDatasetPredictor(pred_config, ds_valid)
-		
-	# # 	for idx, outs in enumerate(pred.get_result()):
-	# # 		o_vol3d 		= np.array(outs[0][:, :, :, :])
-	# # 		o_vol3d_decoded = np.array(outs[1][:, :, :, :])
-
-	# # 		# Calculate the index for result
-	# # 		idx_image = idx//len(images) 
-	# # 		idx_style = idx%len(images)
-
-	# # 		head, tail = os.path.split(images[idx_image])
-
-	# # 		filename_old = os.path.join(resultDir, head+ '_style_' + 'intensity' +'.tif')
-	# # 		filename_new = os.path.join(resultDir, head+ '_style_' + str(idx_style).zfill(2) +'.tif')
-	# # 		print(filename_old, filename_new)
-
-	# # 		skimage.io.imsave(filename_old, np.squeeze(o_vol3d))
-	# # 		skimage.io.imsave(filename_new, np.squeeze(o_vol3d_decoded))
-			
+	
 
 ###################################################################################################
 class VisualizeRunner(Callback):
@@ -680,7 +621,7 @@ class RenderingRunner(Callback):
 
 		# shutil.move('result-*', 'result-latest')
 		# resultDir = time.strftime("result-%Y-%m-%d-%H-%m-%S")
-		resultDir = 'result_viz/'
+		resultDir = 'result_stylish/'
 		shutil.rmtree(resultDir, ignore_errors=True)
 		os.makedirs(resultDir)
 
@@ -770,7 +711,7 @@ if __name__ == '__main__':
 			callbacks       =   [
 				PeriodicTrigger(ModelSaver(), every_k_epochs=10),
 				PeriodicTrigger(VisualizeRunner(ds_valid), every_k_epochs=1),
-				PeriodicTrigger(RenderingRunner(ds_test2), every_k_epochs=1),
+				PeriodicTrigger(RenderingRunner(ds_test2), every_k_epochs=10),
 				PeriodicTrigger(InferenceRunner(ds_valid, [ScalarStats('losses/loss_img3d'), 
 														   ScalarStats('losses/loss_img2d'), 
 														   ScalarStats('losses/loss_vol2d'), 
