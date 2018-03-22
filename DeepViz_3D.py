@@ -6,7 +6,7 @@ from __future__ import division
 from __future__ import print_function
 
 
-import os, sys, argparse, glob, cv2, six, h5py
+import os, sys, argparse, glob, cv2, six, h5py, time, shutil
 
 
 
@@ -45,7 +45,7 @@ DIMY  = 256
 DIMZ  = 256
 SIZE  = 256 # For resize
 
-EPOCH_SIZE = 400
+EPOCH_SIZE = 10
 BATCH_SIZE = 1
 NB_FILTERS = 32
 
@@ -154,6 +154,7 @@ class Model(ModelDesc):
 	def vgg19_encoder(self, inputs, name='VGG19_Encoder'):
 		with varreplace.freeze_variables():
 			with argscope([Conv2D], kernel_shape=3, nl=tf.nn.relu):
+				# print(inputs.get_shape())
 				inputs  = inputs - VGG19_MEAN_TENSOR
 				conv1_1 = Conv2D('conv1_1', inputs,  64)
 				conv1_2 = Conv2D('conv1_2', conv1_1, 64)
@@ -205,6 +206,7 @@ class Model(ModelDesc):
 			InputDesc(tf.float32, (   1, DIMY, DIMX, 3), 'style'),
 			InputDesc(tf.int32,                  (1, 1), 'condition'),
 			]
+
 									
 	def _build_graph(self, inputs):
 		# sImg2d # sImg the projection 2D, reshape from 
@@ -212,6 +214,7 @@ class Model(ModelDesc):
 
 		vol3d, img2d, condition = inputs # Split the input
 
+		# with tf.variable_scope('gen'):
 		# Step 0; run thru 3d encoder
 		with tf.variable_scope('encoder_3d'):
 			vol2d = self.vol3d_encoder(vol3d)
@@ -390,30 +393,49 @@ class ImageDataFlow(RNGDataFlow):
 				style = self.central_crop(style)
 				style = self.resize_image(style, size=256)
 			elif self.isTest:
-				# Read image
-				rand_image = self.rng.randint(0, len(images))
-				rand_style = self.rng.randint(0, len(styles))
-				image = skimage.io.imread(images[rand_image])
-				style = cv2.imread(styles[rand_style], cv2.IMREAD_COLOR)
-				style = cv2.cvtColor(style, cv2.COLOR_BGR2RGB) # BGR to RGB
+				for i in range(len(images)):
+					for s in range(len(styles)):
+						# Read image
+						image = skimage.io.imread(images[i])
+						style = cv2.imread(styles[s], cv2.IMREAD_COLOR)
+						style = cv2.cvtColor(style, cv2.COLOR_BGR2RGB) # BGR to RGB
 
-				image = self.random_pad(image, symmetry=True)
-				# Style augmentation
-				style = self.central_crop(style)
-				style = self.resize_image(style, size=256)
-			# Make RGB volume
-			image = np.stack([image,image,image], axis=3) #012 to 0123
-			image = np.squeeze(image)
-			condition = 0 if self.isTrain else 1
-			condition = np.array(condition)
-			style     = np.expand_dims(style, axis=0)
-			condition = np.expand_dims(condition, axis=0)
-			condition = np.expand_dims(condition, axis=0)
-			yield [
-				   image.astype(np.float32), 
-				   style.astype(np.float32), 
-				   condition.astype(np.int32)
-				   ]
+						image = self.random_pad(image, symmetry=True)
+						# Style augmentation
+						style = self.central_crop(style)
+						style = self.resize_image(style, size=256)
+						
+						# Make RGB volume
+						image = np.stack([image,image,image], axis=3) #012 to 0123
+						image = np.squeeze(image)
+						condition = 0 if self.isTrain else 1
+						condition = np.array(condition)
+						style     = np.expand_dims(style, axis=0)
+						condition = np.expand_dims(condition, axis=0)
+						condition = np.expand_dims(condition, axis=0)
+						# print(image.shape)
+						# print(style.shape)
+						# print(condition.shape)
+						yield [
+							   image.astype(np.float32), 
+							   style.astype(np.float32), 
+							   condition.astype(np.int32)
+							   ]
+
+			if not self.isTest:
+				# Make RGB volume
+				image = np.stack([image,image,image], axis=3) #012 to 0123
+				image = np.squeeze(image)
+				condition = 0 if self.isTrain else 1
+				condition = np.array(condition)
+				style     = np.expand_dims(style, axis=0)
+				condition = np.expand_dims(condition, axis=0)
+				condition = np.expand_dims(condition, axis=0)
+				yield [
+					   image.astype(np.float32), 
+					   style.astype(np.float32), 
+					   condition.astype(np.int32)
+					   ]
 
 	def central_crop(self, image):
 		shape = image.shape
@@ -535,22 +557,88 @@ def get_data(image_path, style_path, size=EPOCH_SIZE):
 							 size=20, 
 							 isValid=True
 							 )
+	ds_test2 = ImageDataFlow(image_path=image_path.replace('train','valid'),
+						 style_path=style_path.replace('train','valid'), 
+						 size=1, 
+						 isTest=True
+						 )
 
 	ds_train.reset_state()
 	ds_valid.reset_state() 
+	ds_test2.reset_state() 
 
 	# ds_train = BatchData(ds_train, BATCH_SIZE)
 	# ds_valid = BatchData(ds_valid, BATCH_SIZE)
 
 	ds_train = PrefetchDataZMQ(ds_train, 4)
 	# ds_valid = PrefetchDataZMQ(ds_valid, 2)
-	return ds_train, ds_valid
+	return ds_train, ds_valid, ds_test2
 
 ###################################################################################################
-def render(model_path, volume_path, style_path):
+def render(model_path, image_path, style_path):
 	pass
+	# # print(sys.argv)
+
+	# # ds_valid = ImageDataFlow(image_path=image_path.replace('train','valid'),
+	# # 						 style_path=style_path.replace('train','valid'), 
+	# # 						 size=1, 
+	# # 						 isValid=True
+	# # 						 )
+	# # # print(ds_valid)
+	# # ds_valid = PrintData(ds_valid, num=5)	
+	# # ds_valid = PrefetchDataZMQ(ds_valid, 2)
+
+	# images = glob.glob(image_path + '/*.tif')
+	# images = natsorted(images)
+	# styles = glob.glob(style_path + '/*.jpg')
+	# styles = natsorted(styles)
+
+	# # # Create results directory
+	# # resultDir='result/'
+
+	# # import shutil
+	# # shutil.rmtree(resultDir, ignore_errors=True)
+	# # os.makedirs(resultDir)
 
 
+	# predict_func = OfflinePredictor(PredictConfig(
+	# 	model=Model(),
+	# 	session_init=get_model_loader(model_path),
+	# 	input_names=['image', 'style', 'condition'],
+	# 	# output_names=['out_vol3d', 'out_vol3d_decoded'])
+	# 	output_names=['losses/loss_vol2d']
+	# 	)
+	# )
+
+	# # pred_config = PredictConfig(
+	# # 	session_init=SaverRestore(model_path), #session_init=SaverRestore(args.load)
+	# # 	model=Model(),
+	# # 	input_names=['image', 'style', 'condition'],
+	# # 	output_names=['out_vol3d', 'out_vol3d_decoded'])
+
+	# # if True:
+	# # 	## Extract stack of images with SimpleDatasetPredictor
+	# # 	pred = SimpleDatasetPredictor(pred_config, ds_valid)
+		
+	# # 	for idx, outs in enumerate(pred.get_result()):
+	# # 		o_vol3d 		= np.array(outs[0][:, :, :, :])
+	# # 		o_vol3d_decoded = np.array(outs[1][:, :, :, :])
+
+	# # 		# Calculate the index for result
+	# # 		idx_image = idx//len(images) 
+	# # 		idx_style = idx%len(images)
+
+	# # 		head, tail = os.path.split(images[idx_image])
+
+	# # 		filename_old = os.path.join(resultDir, head+ '_style_' + 'intensity' +'.tif')
+	# # 		filename_new = os.path.join(resultDir, head+ '_style_' + str(idx_style).zfill(2) +'.tif')
+	# # 		print(filename_old, filename_new)
+
+	# # 		skimage.io.imsave(filename_old, np.squeeze(o_vol3d))
+	# # 		skimage.io.imsave(filename_new, np.squeeze(o_vol3d_decoded))
+			
+
+###################################################################################################
 class VisualizeRunner(Callback):
 	def __init__(self, input, tower_name='InferenceTower', device=0):
 		self.dset = input 
@@ -573,6 +661,62 @@ class VisualizeRunner(Callback):
 
 			self.trainer.monitors.put_image('viz_valid', viz_valid[...,::1])
 ###################################################################################################
+class RenderingRunner(Callback):
+	def __init__(self, input, tower_name='InferenceTower', device=0):
+		self.dset = input 
+		self._tower_name = tower_name
+		self._device = device
+
+	def _setup_graph(self):
+		self.pred = self.trainer.get_predictor(
+			['image', 'style', 'condition'], ['out_vol3d', 'out_vol3d_decoded'])
+
+	def _before_train(self):
+		pass 
+
+	def _trigger(self):
+		image_path = args.image_path
+		style_path = args.style_path
+
+		
+		resultDir = time.strftime("result-%Y-%m-%d-%H-%m-%S")
+		shutil.rmtree(resultDir, ignore_errors=True)
+		os.makedirs(resultDir)
+
+		filename_vol = ''
+		for idx, lst in enumerate(self.dset.get_data()):
+			# viz_valid = self.pred(lst)
+			# viz_valid = np.squeeze(np.array(viz_valid))
+
+			images = glob.glob(image_path + '/*.tif')
+			images = natsorted(images)
+			styles = glob.glob(style_path + '/*.jpg')
+			styles = natsorted(styles)
+			if True:
+				## Extract stack of images with SimpleDatasetPredictor
+				o_vol3d, o_vol3d_decoded = self.pred(lst)
+				
+				# for idx, outs in enumerate(pred.get_result()):
+				# 	o_vol3d 		= np.array(outs[0][:, :, :, :])
+				# 	o_vol3d_decoded = np.array(outs[1][:, :, :, :])
+
+				# Calculate the index for result
+				idx_image = idx//len(images) 
+				idx_style = idx%len(images)
+
+				head, tail = os.path.split(images[idx_image])
+
+				filename_old = os.path.join(resultDir, tail.replace('.tif', '')+ '_style_' + 'intensity' +'.tif')
+				filename_new = os.path.join(resultDir, tail.replace('.tif', '')+ '_style_' + str(idx_style).zfill(2) +'.tif')
+				
+
+				if filename_old!=filename_vol: # If different from base then save
+					filename_vol = filename_old
+					skimage.io.imsave(filename_old, np.squeeze(o_vol3d.astype(np.uint8)))
+					print("Saving "+filename_old)
+				skimage.io.imsave(filename_new, np.squeeze(o_vol3d_decoded.astype(np.uint8)))
+				print("Saving "+filename_new)
+###################################################################################################
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
 	parser.add_argument('--gpu', 		help='comma separated list of GPU(s) to use.')
@@ -594,14 +738,14 @@ if __name__ == '__main__':
 		os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
 
 	if args.render:
-		render(args.load, args.volume, args.style)
+		render(args.load, args.image_path, args.style_path)
 	else:
 		# Set the logger directory
 		logger.auto_set_dir()
 
 		nr_tower = max(get_nr_gpu(), 1)
 
-		ds_train, ds_valid = get_data(args.image_path, args.style_path)
+		ds_train, ds_valid, ds_test2 = get_data(args.image_path, args.style_path)
 
 		model = Model()
 
@@ -612,7 +756,7 @@ if __name__ == '__main__':
 
 			weight = dict(np.load(args.vgg19))
 			param_dict = {}
-			param_dict.update({'encoder_vgg19_2d/' + name: value for name, value in six.iteritems(weight)})
+			param_dict.update({'gen/encoder_vgg19_2d/' + name: value for name, value in six.iteritems(weight)})
 			session_init = DictRestore(param_dict)
 
 
@@ -625,6 +769,7 @@ if __name__ == '__main__':
 			callbacks       =   [
 				PeriodicTrigger(ModelSaver(), every_k_epochs=10),
 				PeriodicTrigger(VisualizeRunner(ds_valid), every_k_epochs=1),
+				PeriodicTrigger(RenderingRunner(ds_test2), every_k_epochs=1),
 				PeriodicTrigger(InferenceRunner(ds_valid, [ScalarStats('losses/loss_img3d'), 
 														   ScalarStats('losses/loss_img2d'), 
 														   ScalarStats('losses/loss_vol2d'), 
@@ -643,5 +788,5 @@ if __name__ == '__main__':
 		# Train the model
 		# SyncMultiGPUTrainer(config).train()
 		launch_train_with_config(
-            config,
-            SyncMultiGPUTrainer(max(get_nr_gpu(), 1)))
+			config,
+			SyncMultiGPUTrainer(max(get_nr_gpu(), 1)))
