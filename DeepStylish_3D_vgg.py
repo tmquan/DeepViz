@@ -298,22 +298,43 @@ class Model(ModelDesc):
 	@auto_reuse_variable_scope
 	def vol3d_encoder(self, x, name='Vol3D_Encoder'):
 		with argscope([Conv3D], kernel_shape=3, padding='SAME', nl=tf.nn.leaky_relu):
+			# x = tf_2tanh(x)
+			# x = tf.expand_dims(x, axis=0) # to 1 256 256 256 3
+			# x = tf.transpose(x, [4, 1, 2, 3, 0]) # here 3x256x256x256x1
+			# x = (LinearWrap(x)
+			# 	.Conv3D('conv1a',   8, strides = 2, padding='SAME') #here 3x128x128x128x8
+			# 	.Conv3D('conv2a',  16, strides = 2, padding='SAME') #here 3x64x64x64x16
+			# 	.Conv3D('conv3a',  32, strides = 2, padding='SAME') #here 3x32x32x32x32
+			# 	.Conv3D('conv4a',  64, strides = 2, padding='SAME') #here 3x16x16x16x64
+			# 	.Conv3D('conv5a', 128, strides = 2, padding='SAME', nl=tf.tanh) #here 3x8x8x8x128
+			# 	()) 
+			# x = tf_2imag(x)
+			# x = tf.transpose(x, [4, 1, 2, 3, 0]) ##here 128x8x8x8x3
+			# # x = tf.reshape(x, [-1, DIMY, DIMX, 3]) #here 256x256x3
+			# x = tf.reshape(x, [-1, 8, 8, 3]) #here 256x256x3
+			# x = tf.batch_to_space(x, crops=[[0,0],[0,0]], block_size=32,name='b2s')
+			# return x
+
+
 			x = tf_2tanh(x)
 			x = tf.expand_dims(x, axis=0) # to 1 256 256 256 3
-			x = tf.transpose(x, [4, 1, 2, 3, 0]) # here 3x256x256x256x1
+			x = tf.transpose(x, [4, 1, 2, 3, 0]) # 
 			x = (LinearWrap(x)
-				.Conv3D('conv1a',   8, strides = 2, padding='SAME') #here 3x128x128x128x8
-				.Conv3D('conv2a',  16, strides = 2, padding='SAME') #here 3x64x64x64x16
-				.Conv3D('conv3a',  32, strides = 2, padding='SAME') #here 3x32x32x32x32
-				.Conv3D('conv4a',  64, strides = 2, padding='SAME') #here 3x16x16x16x64
-				.Conv3D('conv5a', 128, strides = 2, padding='SAME', nl=tf.tanh) #here 3x8x8x8x128
+				.Conv3D('conv1a',   16, strides = 2, padding='SAME') #
+				.Conv3D('conv2a',   32, strides = 2, padding='SAME') #
+				.Conv3D('conv3a',   64, strides = 2, padding='SAME') #
+				.Conv3D('conv4a',  128, strides = 2, padding='SAME') #
+				.Conv3D('conv5a',  256, strides = 2, padding='SAME') #
+				.Conv3D('conv6a', 1024, strides = 2, padding='SAME', use_bias=True) # 4x4x4x1024
 				()) 
+			x = tf.transpose(x, [4, 1, 2, 3, 0]) ##
+			x = tf.reshape(x, [-1, 4, 4, 3]) #
+			x = tf.batch_to_space(x, crops=[[0,0],[0,0]], block_size=64,name='b2s')
+			
 			x = tf_2imag(x)
-			x = tf.transpose(x, [4, 1, 2, 3, 0]) ##here 128x8x8x8x3
-			# x = tf.reshape(x, [-1, DIMY, DIMX, 3]) #here 256x256x3
-			x = tf.reshape(x, [-1, 8, 8, 3]) #here 256x256x3
-			x = tf.batch_to_space(x, crops=[[0,0],[0,0]], block_size=32,name='b2s')
 			return x
+
+
 		# with argscope([Conv2D], kernel_shape=3, strides=(2,2), padding='SAME', nl=tf.nn.leaky_relu):
 		# 	with argscope([tf_batch_to_space], crops=[[0,0],[0,0]], block_size=2):
 		# 		x = (LinearWrap(x)
@@ -347,12 +368,28 @@ class Model(ModelDesc):
 	@auto_reuse_variable_scope
 	def vol3d_decoder(self, x, name='Vol3D_Decoder'):
 		with argscope([Conv3DTranspose], kernel_shape=3, padding='SAME', nl=tf.nn.leaky_relu):
+			# x = tf_2tanh(x)
+			# x = tf.space_to_batch(x, paddings=[[0,0],[0,0]], block_size=32 ,name='s2b')
+			# x = tf.reshape(x, [-1, 8, 8, 8, 3]) 
+			# x = tf.transpose(x, [4, 1, 2, 3, 0]) # #here 3x8x8x8x128
+			# x = (LinearWrap(x)
+			# 	.Conv3DTranspose('conv5b',  64, strides = 2, padding='SAME') #here 3x16x16x16x64
+			# 	.Conv3DTranspose('conv4b',  32, strides = 2, padding='SAME') #here 3x32x32x32x32
+			# 	.Conv3DTranspose('conv3b',  16, strides = 2, padding='SAME') #here 3x64x64x64x16
+			# 	.Conv3DTranspose('conv2b',   8, strides = 2, padding='SAME') #here 3x128x128x128x8
+			# 	.Conv3DTranspose('conv1b',   1, strides = 2, padding='SAME', nl=tf.tanh) #here 3x256x256x256x1
+			# 	()) 
+			# x = tf_2imag(x)
+			# x = tf.transpose(x, [4, 1, 2, 3, 0]) # here 1x256x256x256x3
+			# x = tf.squeeze(x)
+			# return x
+
 			x = tf_2tanh(x)
-			# x = tf.reshape(x, [128, 8, 8, 8, 3]) 
-			x = tf.space_to_batch(x, paddings=[[0,0],[0,0]], block_size=32 ,name='s2b')
-			x = tf.reshape(x, [-1, 8, 8, 8, 3]) 
+			x = tf.space_to_batch(x, paddings=[[0,0],[0,0]], block_size=64 ,name='s2b')
+			x = tf.reshape(x, [-1, 4, 4, 4, 3]) 
 			x = tf.transpose(x, [4, 1, 2, 3, 0]) # #here 3x8x8x8x128
 			x = (LinearWrap(x)
+				.Conv3DTranspose('conv6b', 128, strides = 2, padding='SAME') #here 3x16x16x16x64
 				.Conv3DTranspose('conv5b',  64, strides = 2, padding='SAME') #here 3x16x16x16x64
 				.Conv3DTranspose('conv4b',  32, strides = 2, padding='SAME') #here 3x32x32x32x32
 				.Conv3DTranspose('conv3b',  16, strides = 2, padding='SAME') #here 3x64x64x64x16
@@ -363,6 +400,9 @@ class Model(ModelDesc):
 			x = tf.transpose(x, [4, 1, 2, 3, 0]) # here 1x256x256x256x3
 			x = tf.squeeze(x)
 			return x
+
+			
+
 			# with argscope([Conv2D], kernel_shape=3, padding='SAME', nl=tf.nn.leaky_relu):
 		# 	with argscope([tf_space_to_batch], paddings=[[0,0],[0,0]], block_shape=2):
 		# 		x = (LinearWrap(x)
@@ -509,7 +549,7 @@ class Model(ModelDesc):
 			# add_moving_summary(loss_img3d)
 
 
-			losses.append(1e1*loss_vol3d)
+			losses.append(2e0*loss_vol3d)
 			# losses.append(1e0*loss_vol2d)
 			losses.append(1e0*loss_img2d)
 			# losses.append(1e0*loss_img3d)
