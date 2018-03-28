@@ -77,7 +77,7 @@ DIMY  = 256
 DIMZ  = 256
 SIZE  = 256 # For resize
 
-EPOCH_SIZE = 100
+EPOCH_SIZE = 400
 BATCH_SIZE = 1
 NB_FILTERS = 32
 
@@ -999,7 +999,7 @@ if __name__ == '__main__':
 			callbacks       =   [
 				PeriodicTrigger(ModelSaver(), every_k_epochs=10),
 				PeriodicTrigger(VisualizeRunner(ds_valid), every_k_epochs=1),
-				PeriodicTrigger(RenderingRunner(ds_test2), every_k_epochs=20),
+				PeriodicTrigger(RenderingRunner(ds_test2), every_k_epochs=100),
 				PeriodicTrigger(InferenceRunner(ds_valid, [ScalarStats('losses/loss_img2d'), 
 														   # ScalarStats('losses/loss_img3d'), 
 														   # ScalarStats('losses/loss_vol2d'), 

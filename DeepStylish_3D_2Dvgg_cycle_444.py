@@ -77,7 +77,7 @@ DIMY  = 256
 DIMZ  = 256
 SIZE  = 256 # For resize
 
-EPOCH_SIZE = 100
+EPOCH_SIZE = 400
 BATCH_SIZE = 1
 NB_FILTERS = 32
 
@@ -375,7 +375,7 @@ class Model(ModelDesc):
 
 	@auto_reuse_variable_scope
 	def vol3d_encoder(self, x, name='Vol3D_Encoder'):
-		with argscope([Conv3D], kernel_shape=3, padding='SAME', use_bias=False,  nl=tf.nn.elu):
+		with argscope([Conv3D], kernel_shape=3, padding='SAME', use_bias=False,  nl=tf.nn.leaky_relu):
 			# x = x - VGG19_MEAN_TENSOR
 			x = tf_2tanh(x)
 			# x = x/255.0
@@ -400,7 +400,7 @@ class Model(ModelDesc):
 			
 	@auto_reuse_variable_scope
 	def vol3d_decoder(self, x, name='Vol3D_Decoder'):
-		with argscope([Conv3DTranspose], kernel_shape=4, padding='SAME', nl=tf.nn.elu):
+		with argscope([Conv3DTranspose], kernel_shape=4, padding='SAME', nl=tf.nn.leaky_relu):
 			# x = x - VGG19_MEAN_TENSOR 
 			# x = BNLReLU(x)
 			x = tf_2tanh(x)
@@ -1010,7 +1010,7 @@ if __name__ == '__main__':
 			callbacks       =   [
 				PeriodicTrigger(ModelSaver(), every_k_epochs=10),
 				PeriodicTrigger(VisualizeRunner(ds_valid), every_k_epochs=1),
-				PeriodicTrigger(RenderingRunner(ds_test2), every_k_epochs=20),
+				PeriodicTrigger(RenderingRunner(ds_test2), every_k_epochs=100),
 				PeriodicTrigger(InferenceRunner(ds_valid, [ScalarStats('losses/loss_img2d'), 
 														   # ScalarStats('losses/loss_img3d'), 
 														   # ScalarStats('losses/loss_vol2d'), 

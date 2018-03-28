@@ -77,7 +77,7 @@ DIMY  = 256
 DIMZ  = 256
 SIZE  = 256 # For resize
 
-EPOCH_SIZE = 100
+EPOCH_SIZE = 400
 BATCH_SIZE = 1
 NB_FILTERS = 32
 
@@ -374,58 +374,8 @@ class Model(ModelDesc):
 	
 
 	@auto_reuse_variable_scope
-	def vol3d_encoder(self, x, name='Vol3D_Encoder'):
-		# with argscope([Conv3D], kernel_shape=4, padding='SAME', nl=tf.nn.elu):
-			# x = tf_2tanh(x)
-			# x = tf.expand_dims(x, axis=0) # to 1 256 256 256 3
-			# x = tf.transpose(x, [4, 1, 2, 3, 0]) # 
-			# x = (LinearWrap(x)
-			# 	.Conv3D('conv1a',   16, strides = 2, padding='SAME') #
-			# 	.Conv3D('conv2a',   32, strides = 2, padding='SAME') #
-			# 	.Conv3D('conv3a',   64, strides = 2, padding='SAME') #
-			# 	.Conv3D('conv4a',  128, strides = 2, padding='SAME') #
-			# 	.Conv3D('conv5a',  256, strides = 2, padding='SAME') #
-			# 	.Conv3D('conv6a', 1024, strides = 2, padding='SAME', use_bias=True) # 4x4x4x1024
-			# 	()) 
-			# x = tf.transpose(x, [4, 1, 2, 3, 0]) ##
-			# x = tf.reshape(x, [-1, 4, 4, 3]) #
-			# x = tf.batch_to_space(x, crops=[[0,0],[0,0]], block_size=64,name='b2s')
-			
-			# x = tf_2imag(x)
-			# return x
-
-
-
-
-		# with argscope([Conv3D], kernel_shape=4, padding='SAME', nl=tf.nn.elu):
-		# 	with argscope([Conv2D], kernel_shape=3, nl=tf.nn.elu):	
-		# 		with argscope([Deconv2D], kernel_shape=3, strides=(2,2), nl=tf.nn.elu):
-		# 			x = tf_2tanh(x)
-		# 			x = tf.expand_dims(x, axis=0) # to 1 256 256 256 3
-		# 			x = tf.transpose(x, [4, 1, 2, 3, 0]) # 
-		# 			x = (LinearWrap(x)
-		# 				.Conv3D('conv1a',   16, strides = 2, padding='SAME') #
-		# 				.Conv3D('conv2a',   32, strides = 2, padding='SAME') #
-		# 				.Conv3D('conv3a',   64, strides = 2, padding='SAME') #
-		# 				.Conv3D('conv4a',  128, strides = 2, padding='SAME') #
-		# 				.Conv3D('conv5a',  256, strides = 2, padding='SAME') #
-		# 				.Conv3D('conv6a',  512, strides = 2, padding='SAME', use_bias=True) # 3x4x4x4x512
-		# 				()) 
-		# 			x = tf.reshape(x, [3, 8, 8, -1]) # 3 8 8 512
-		# 			x = (LinearWrap(x)
-		# 				.Subpix2D('subpix0', 256) # 3 16 16 256
-		# 				.Subpix2D('subpix1', 128) # 3 32 32 128
-		# 				.Subpix2D('subpix2', 64) # 3 64 64 64
-		# 				.Subpix2D('subpix3', 32) # 3 128 128 32
-		# 				.Subpix2D('subpix4', 16) # 3 256 256 16
-		# 				.Conv2D('conv_last', 1) # 3 256 256 1
-		# 				())
-		# 			x = tf.transpose(x, [3, 1, 2, 0])
-		# 			x = tf_2imag(x)
-		# 			return x
-			
-			
-		with argscope([Conv2D], kernel_shape=3, strides=1, padding='SAME', use_bias=False, nl=tf.nn.elu):
+	def vol3d_encoder(self, x, name='Vol3D_Encoder'):	
+		with argscope([Conv2D], kernel_shape=3, strides=1, padding='SAME', use_bias=False, nl=tf.nn.leaky_relu):
 			x = tf.transpose(x, [3, 1, 2, 0]) # from z y x c to c y x z
 			x = tf_2tanh(x)
 			x = (LinearWrap(x)
@@ -444,8 +394,8 @@ class Model(ModelDesc):
 
 	@auto_reuse_variable_scope
 	def vol3d_decoder(self, x, name='Vol3D_Decoder'):
-		with argscope([Conv3D], kernel_shape=3, padding='SAME', use_bias=False,  nl=tf.nn.elu):
-			with argscope([Conv3DTranspose], kernel_shape=3, padding='SAME', use_bias=False, nl=tf.nn.elu):
+		with argscope([Conv3D], kernel_shape=3, padding='SAME', use_bias=False,  nl=tf.nn.leaky_relu):
+			with argscope([Conv3DTranspose], kernel_shape=3, padding='SAME', use_bias=False, nl=tf.nn.leaky_relu):
 				# x = x - VGG19_MEAN_TENSOR 
 				# x = BNLReLU(x)
 				x = tf_2tanh(x)
@@ -490,63 +440,6 @@ class Model(ModelDesc):
 			return x
 			
 
-
-
-		# with argscope([Conv3D], kernel_shape=3, padding='SAME', use_bias=False,  nl=tf.nn.elu):
-		# 	with argscope([Conv3DTranspose], kernel_shape=3, padding='SAME', use_bias=False, nl=tf.nn.elu):
-		# 		with argscope([Conv2D], kernel_shape=3, nl=tf.nn.elu):	
-		# 			with argscope([Deconv2D], kernel_shape=3, strides=(2,2), nl=tf.nn.elu):
-		# 				x = tf_2tanh(x)
-					
-		# 				x = tf.transpose(x, [3, 1, 2, 0]) # 3 256 256 1
-		# 				x = (LinearWrap(x)
-		# 					.Conv2D('conv2d_0a',  32, strides=2) # 128 128 
-		# 					# .Conv2D('conv2d_0b',  32, strides=1) # 128 128 
-		# 					.Conv2D('conv2d_1a',  64, strides=2) # 64 64 
-		# 					# .Conv2D('conv2d_1b',  64, strides=1) # 64 64 
-		# 					.Conv2D('conv2d_2a', 128, strides=2) # 32 32 
-		# 					# .Conv2D('conv2d_2b', 128, strides=1) # 32 32 
-		# 					.Conv2D('conv2d_3a', 256, strides=2) # 16 16 
-		# 					# .Conv2D('conv2d_3b', 256, strides=1) # 16 16 
-		# 					.Conv2D('conv2d_4a', 512, strides=2) # 8 8 
-		# 					# .Conv2D('conv2d_4b', 512, strides=1) # 8 8 
-		# 					())
-		# 				x = tf.reshape(x, [-1, 4, 4, 4, 512])
-		# 				x = (LinearWrap(x)
-		# 					.Conv3DTranspose('conv3d_6a', 256, strides = 2) #
-		# 					# .Conv3D('conv3d_6b',   	      256, strides = 1) #
-		# 					.Conv3DTranspose('conv3d_5a', 128, strides = 2) #
-		# 					# .Conv3D('conv3d_5b',   	      128, strides = 1) #
-		# 					.Conv3DTranspose('conv3d_4a',  64, strides = 2) #
-		# 					# .Conv3D('conv3d_4b',   	       64, strides = 1) #
-		# 					.Conv3DTranspose('conv3d_3a',  32, strides = 2) #
-		# 					# .Conv3D('conv3d_3b',   	       32, strides = 1) #
-		# 					.Conv3DTranspose('conv3d_2a',  16, strides = 2) #
-		# 					# .Conv3D('conv3d_2b',   	       16, strides = 1) #
-		# 					.Conv3DTranspose('conv3d_1a',   1, strides = 2, use_bias=True, nl=tf.nn.tanh) #
-		# 					()) 
-		# 				x = tf.transpose(x, [4, 1, 2, 3, 0]) # 
-		# 				x = tf.squeeze(x)
-		# 				x = tf_2imag(x)			
-		# 				return x
-
-		# with varreplace.freeze_variables():
-			# with argscope([Conv2D], kernel_shape=3, nl=BNLReLU):
-			# 	x = tf.transpose(x, [3, 1, 2, 0]) # from 1 y x c to c y x 1
-			# 	x = tf_2tanh(x)
-			# 	x = (LinearWrap(x)
-			# 			.Subpix2D('conv7', DIMZ/128,scale=1, ) # 2
-			# 			.Subpix2D('conv6', DIMZ/64, scale=1, ) # 4
-			# 			.Subpix2D('conv5', DIMZ/32, scale=1, ) # 8
-			# 			.Subpix2D('conv4', DIMZ/16, scale=1, ) # 16
-			# 			.Subpix2D('conv3', DIMZ/8,  scale=1, ) # 32
-			# 			.Subpix2D('conv2', DIMZ/4,  scale=1, ) # 64				
-			# 			.Subpix2D('conv1', DIMZ/2,  scale=1, ) # 128
-			# 			.Subpix2D('conv0', DIMZ/1,  scale=1, nl=tf.nn.tanh) # 128
-			# 			())
-			# 	x = tf.transpose(x, [3, 1, 2, 0]) # from c y x z to z y x c
-			# 	x = tf_2imag(x)
-			# 	return x
 
 	@auto_reuse_variable_scope
 	def vgg19_encoder(self, inputs, name='VGG19_Encoder'):
@@ -1032,7 +925,7 @@ class RenderingRunner(Callback):
 
 		# shutil.move('result-*', 'result-latest')
 		# resultDir = time.strftime("result-%Y-%m-%d-%H-%m-%S")
-		resultDir = 'result_stylish_3d_vgg_cycle/'
+		resultDir = 'result_stylish_3d_vgg_cycle_pro/'
 		shutil.rmtree(resultDir, ignore_errors=True)
 		os.makedirs(resultDir)
 
@@ -1135,7 +1028,7 @@ if __name__ == '__main__':
 			callbacks       =   [
 				PeriodicTrigger(ModelSaver(), every_k_epochs=10),
 				PeriodicTrigger(VisualizeRunner(ds_valid), every_k_epochs=1),
-				PeriodicTrigger(RenderingRunner(ds_test2), every_k_epochs=20),
+				PeriodicTrigger(RenderingRunner(ds_test2), every_k_epochs=100),
 				PeriodicTrigger(InferenceRunner(ds_valid, [ScalarStats('losses/loss_img2d'), 
 														   # ScalarStats('losses/loss_img3d'), 
 														   # ScalarStats('losses/loss_vol2d'), 
