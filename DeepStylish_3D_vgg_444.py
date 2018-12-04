@@ -62,7 +62,7 @@ DIMY  = 256
 DIMZ  = 256
 SIZE  = 256 # For resize
 
-EPOCH_SIZE = 400
+EPOCH_SIZE = 500
 BATCH_SIZE = 1
 NB_FILTERS = 32
 
@@ -300,7 +300,7 @@ class Model(ModelDesc):
         with argscope([Conv3D], kernel_shape=3, padding='SAME', nl=tf.nn.leaky_relu):
           
 
-            x = tf_2tanh(x)
+            # x = tf_2tanh(x)
             x = tf.expand_dims(x, axis=0) # to 1 256 256 256 3
             # x = tf.transpose(x, [4, 1, 2, 3, 0]) # 
             x = (LinearWrap(x)
@@ -319,9 +319,9 @@ class Model(ModelDesc):
 
     @auto_reuse_variable_scope
     def vol3d_decoder(self, x, name='Vol3D_Decoder'):
-        with argscope([Conv3DTranspose], kernel_shape=3, padding='SAME', nl=tf.nn.leaky_relu):
-            x = FullyConnected('dense3d_1', x, 2048, activation=tf.nn.relu)
-            x = FullyConnected('dense3d_2', x, 32768, activation=tf.nn.relu)
+        with argscope([Conv3DTranspose], kernel_shape=3, padding='SAME', nl=INLReLU):
+            x = FullyConnected('dense3d_1', x, 2048, activation=INLReLU)
+            x = FullyConnected('dense3d_2', x, 32768, activation=INLReLU)
             x = tf.reshape(x, [-1, 4, 4, 4, 512]) 
             # x = tf.transpose(x, [4, 1, 2, 3, 0]) # #here 3x8x8x8x128
             x = (LinearWrap(x)
@@ -330,9 +330,9 @@ class Model(ModelDesc):
                 .Conv3DTranspose('conv4b',  32, strides = 2, padding='SAME') #here 3x32x32x32x32
                 .Conv3DTranspose('conv3b',  16, strides = 2, padding='SAME') #here 3x64x64x64x16
                 .Conv3DTranspose('conv2b',   8, strides = 2, padding='SAME') #here 3x128x128x128x8
-                .Conv3DTranspose('conv1b',   3, strides = 2, padding='SAME', nl=tf.tanh) #here 3x256x256x256x1
+                .Conv3DTranspose('conv1b',   3, strides = 2, padding='SAME') #here 3x256x256x256x1
                 ()) 
-            x = tf_2imag(x)
+            # x = tf_2imag(x)
             x = tf.squeeze(x)
             return x
 
@@ -366,18 +366,18 @@ class Model(ModelDesc):
                 conv5_4 = Conv2D('conv5_4', conv5_3, 512) # 1 16 16 512
                 pool5 = MaxPooling('pool5', conv5_4, 2)  # 4
                 x = pool5 # 1 8 8 512
-                x = FullyConnected('dense3d_1', x, 2048, activation=tf.nn.relu)
-                x = FullyConnected('dense3d_2', x, 512, activation=tf.nn.relu)
+                x = FullyConnected('dense2d_1', x, 2048, activation=tf.nn.relu)
+                x = FullyConnected('dense2d_2', x, 512, activation=tf.nn.relu)
                 # return normalize(conv4_1)
                 return x
     @auto_reuse_variable_scope
     def vgg19_decoder(self, inputs, name='VGG19_Decoder'):
         # with varreplace.freeze_variables():
-        with argscope([Conv2D], kernel_shape=3, nl=BNLReLU):    
-            with argscope([Deconv2D], kernel_shape=3, strides=(2,2), nl=BNLReLU):
+        with argscope([Conv2D], kernel_shape=3, nl=INLReLU):    
+            with argscope([Deconv2D], kernel_shape=3, strides=(2,2), nl=INLReLU):
                 x = inputs
-                x = FullyConnected('dense3d_1', x, 2048, activation=tf.nn.relu)
-                x = FullyConnected('dense3d_2', x, 32768, activation=tf.nn.relu)
+                x = FullyConnected('dense2d_1', x, 2048, activation=INLReLU)
+                x = FullyConnected('dense2d_2', x, 32768, activation=INLReLU)
                 # 1 8 8 512
                 # x = tf.reshape(x, [-1, 4, 4, 3]) #
                 x = tf.reshape(x, [-1, 8, 8, 512]) #
@@ -792,100 +792,10 @@ def get_data(image_path, style_path, size=EPOCH_SIZE):
     # ds_train = BatchData(ds_train, BATCH_SIZE)
     # ds_valid = BatchData(ds_valid, BATCH_SIZE)
 
-    # ds_train = PrefetchDataZMQ(ds_train, 4)
+    ds_train = PrefetchDataZMQ(ds_train, 4)
     # ds_valid = PrefetchDataZMQ(ds_valid, 2)
     return ds_train, ds_valid, ds_test2
 
-###################################################################################################
-def render(model_path, image_path, style_path):
-    pass
-    
-
-###################################################################################################
-class VisualizeRunner(Callback):
-    def __init__(self, input, tower_name='InferenceTower', device=0):
-        self.dset = input 
-        self._tower_name = tower_name
-        self._device = device
-
-    def _setup_graph(self):
-        self.pred = self.trainer.get_predictor(
-            ['image', 'style', 'condition'], ['visualization/viz'])
-
-    def _before_train(self):
-        pass 
-
-    def _trigger(self):
-        for lst in self.dset.get_data():
-            viz_valid = self.pred(lst)
-            viz_valid = np.squeeze(np.array(viz_valid))
-
-            #print viz_valid.shape
-
-            self.trainer.monitors.put_image('viz_valid', viz_valid[...,::1])
-###################################################################################################
-class RenderingRunner(Callback):
-    def __init__(self, input, tower_name='InferenceTower', device=0):
-        self.dset = input 
-        self._tower_name = tower_name
-        self._device = device
-
-    def _setup_graph(self):
-        self.pred = self.trainer.get_predictor(
-            ['image', 'style', 'condition'], ['out_vol3d', 'out_vol3d_decoded'])
-
-    def _before_train(self):
-        pass 
-
-    def _trigger(self):
-        image_path = args.image_path
-        style_path = args.style_path
-
-        # shutil.move('result-*', 'result-latest')
-        # resultDir = time.strftime("result-%Y-%m-%d-%H-%m-%S")
-        resultDir = 'result_stylish_3d_vgg_444/'
-        shutil.rmtree(resultDir, ignore_errors=True)
-        os.makedirs(resultDir)
-
-        
-        filename_vol = ''
-        for idx, lst in enumerate(self.dset.get_data()):
-            # viz_valid = self.pred(lst)
-            # viz_valid = np.squeeze(np.array(viz_valid))
-
-            images = glob.glob(image_path + '/*.tif')
-            images = natsorted(images)
-            styles = glob.glob(style_path + '/*.jpg')
-            styles = natsorted(styles)
-            if True:
-                ## Extract stack of images with SimpleDatasetPredictor
-                o_vol3d, o_vol3d_decoded = self.pred(lst)
-                
-                # for idx, outs in enumerate(pred.get_result()):
-                #   o_vol3d         = np.array(outs[0][:, :, :, :])
-                #   o_vol3d_decoded = np.array(outs[1][:, :, :, :])
-
-                # Calculate the index for result
-                idx_image = idx//len(images) 
-                idx_style = idx%len(images)
-
-                # head, tail = os.path.split(images[idx_image])
-
-                # filename_old = os.path.join(resultDir, tail.replace('.tif', '')+ '_style_' + 'intensity' +'.tif')
-                # filename_new = os.path.join(resultDir, tail.replace('.tif', '')+ '_style_' + str(idx_style).zfill(2) +'.tif')
-                head = images[idx_image].split('.', 1) # Split the first ocurrent
-                filename_old = os.path.join(resultDir, head+'99_256_256_256.raw')
-                filename_new = os.path.join(resultDir, head+str(idx_style).zfill(2)+'_256_256_256.raw')
-                
-
-                if filename_old!=filename_vol: # If different from base then save
-                    filename_vol = filename_old
-                    # skimage.io.imsave(filename_old, np.squeeze(o_vol3d[...,1].astype(np.uint8)))
-                    np.squeeze(o_vol3d[...,1].astype(np.uint8)).tofile(filename_old)
-                    print("Saving "+filename_old)
-                #skimage.io.imsave(filename_new, np.squeeze(o_vol3d_decoded.astype(np.uint8)))
-                np.squeeze(o_vol3d_decoded.astype(np.uint8)).tofile(filename_new)
-                print("Saving "+filename_new)
 ###################################################################################################
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -938,11 +848,7 @@ if __name__ == '__main__':
             dataflow        =   ds_train,
             callbacks       =   [
                 PeriodicTrigger(ModelSaver(), every_k_epochs=10),
-                PeriodicTrigger(VisualizeRunner(ds_valid), every_k_epochs=1),
-                PeriodicTrigger(RenderingRunner(ds_test2), every_k_epochs=100),
                 PeriodicTrigger(InferenceRunner(ds_valid, [ScalarStats('losses/loss_img2d'), 
-                                                           # ScalarStats('losses/loss_img3d'), 
-                                                           # ScalarStats('losses/loss_vol2d'), 
                                                            ScalarStats('losses/loss_vol3d'), 
                                                            ScalarStats('self.cost'), 
                                                            ]), every_k_epochs=1),
@@ -950,7 +856,7 @@ if __name__ == '__main__':
                 #ScheduledHyperParamSetter('learning_rate', [(30, 6e-6), (45, 1e-6), (60, 8e-7)]),
                 #HumanHyperParamSetter('learning_rate'),
                 ],
-            max_epoch       =   500, 
+            max_epoch       =   10000, 
             session_init    =   session_init,
             nr_tower        =   max(get_nr_gpu(), 1)
             )
