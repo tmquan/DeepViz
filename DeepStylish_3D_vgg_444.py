@@ -296,11 +296,12 @@ class Model(ModelDesc):
     
 
     @auto_reuse_variable_scope
-    def vol3d_encoder(self, x, name='Vol3D_Encoder'):
+    def vol3d_encoder(self, inputs, name='Vol3D_Encoder'):
         with argscope([Conv3D], kernel_shape=3, padding='SAME', nl=tf.nn.leaky_relu):
           
 
             # x = tf_2tanh(x)
+            x  = inputs - VGG19_MEAN_TENSOR
             x = tf.expand_dims(x, axis=0) # to 1 256 256 256 3
             # x = tf.transpose(x, [4, 1, 2, 3, 0]) # 
             x = (LinearWrap(x)
@@ -312,16 +313,16 @@ class Model(ModelDesc):
                 .Conv3D('conv6a',  512, strides = 2, padding='SAME', use_bias=True) # 4x4x4x1024
                 ()) 
            
-            x = FullyConnected('dense3d_1', x, 2048, activation=tf.nn.relu)
-            x = FullyConnected('dense3d_2', x, 512, activation=tf.nn.relu)
+            x = FullyConnected('dense3d_1', x, 2048, activation=tf.nn.leaky_relu)
+            x = FullyConnected('dense3d_2', x, 512, activation=tf.nn.leaky_relu)
             return x
 
 
     @auto_reuse_variable_scope
     def vol3d_decoder(self, x, name='Vol3D_Decoder'):
-        with argscope([Conv3DTranspose], kernel_shape=3, padding='SAME', nl=INLReLU):
-            x = FullyConnected('dense3d_1', x, 2048, activation=INLReLU)
-            x = FullyConnected('dense3d_2', x, 32768, activation=INLReLU)
+        with argscope([Conv3DTranspose], kernel_shape=3, padding='SAME', nl=tf.nn.leaky_relu):
+            x = FullyConnected('dense3d_1', x, 2048, activation=tf.nn.leaky_relu)
+            x = FullyConnected('dense3d_2', x, 32768, activation=tf.nn.leaky_relu)
             x = tf.reshape(x, [-1, 4, 4, 4, 512]) 
             # x = tf.transpose(x, [4, 1, 2, 3, 0]) # #here 3x8x8x8x128
             x = (LinearWrap(x)
@@ -334,6 +335,7 @@ class Model(ModelDesc):
                 ()) 
             # x = tf_2imag(x)
             x = tf.squeeze(x)
+            x = x + VGG19_MEAN_TENSOR
             return x
 
            
@@ -366,9 +368,10 @@ class Model(ModelDesc):
                 conv5_4 = Conv2D('conv5_4', conv5_3, 512) # 1 16 16 512
                 pool5 = MaxPooling('pool5', conv5_4, 2)  # 4
                 x = pool5 # 1 8 8 512
-                x = FullyConnected('dense2d_1', x, 2048, activation=tf.nn.relu)
-                x = FullyConnected('dense2d_2', x, 512, activation=tf.nn.relu)
+                x = FullyConnected('dense2d_1', x, 2048, activation=tf.nn.leaky_relu)
+                x = FullyConnected('dense2d_2', x, 512, activation=tf.nn.leaky_relu)
                 # return normalize(conv4_1)
+
                 return x
     @auto_reuse_variable_scope
     def vgg19_decoder(self, inputs, name='VGG19_Decoder'):
@@ -376,8 +379,8 @@ class Model(ModelDesc):
         with argscope([Conv2D], kernel_shape=3, nl=INLReLU):    
             with argscope([Deconv2D], kernel_shape=3, strides=(2,2), nl=INLReLU):
                 x = inputs
-                x = FullyConnected('dense2d_1', x, 2048, activation=INLReLU)
-                x = FullyConnected('dense2d_2', x, 32768, activation=INLReLU)
+                x = FullyConnected('dense2d_1', x, 2048, activation=tf.nn.leaky_relu)
+                x = FullyConnected('dense2d_2', x, 32768, activation=tf.nn.leaky_relu)
                 # 1 8 8 512
                 # x = tf.reshape(x, [-1, 4, 4, 3]) #
                 x = tf.reshape(x, [-1, 8, 8, 512]) #
