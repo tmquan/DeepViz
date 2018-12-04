@@ -111,11 +111,43 @@ def Subpix2D(inputs, chan, scale=2, stride=1, nl=tf.nn.leaky_relu):
             results = tf.depth_to_space(results, scale, name='depth2space', data_format='NHWC')
         return results
 
-@layer_register(log_shape=True)
-def upsample(x, factor=2):
+# @layer_register(log_shape=True)
+def Upsample2D(x, factor=2):
     _, h, w, _ = x.get_shape().as_list()
-    x = tf.image.resize_nearest_neighbor(x, [factor * h, factor * w], align_corners=True)
+    x = tf.image.resize_bilinear(x, [factor * h, factor * w], align_corners=True)
     return x
+
+def Upsample3D(x, factor=2):
+    b_size, x_size, y_size, z_size, c_size = \
+            input_tensor.shape.as_list()
+    x_size_new, y_size_new, z_size_new = [factor * x_size, factor * y_size, factor * z_size]
+
+    if (x_size == x_size_new) and (y_size == y_size_new) and (
+            z_size == z_size_new):
+        # already in the target shape
+        return input_tensor
+
+    # resize y-z
+    squeeze_b_x = tf.reshape(
+        input_tensor, [-1, y_size, z_size, c_size])
+    resize_b_x = tf.image.resize_bilinear(
+        squeeze_b_x, [y_size_new, z_size_new])
+    resume_b_x = tf.reshape(
+        resize_b_x, [b_size, x_size, y_size_new, z_size_new, c_size])
+
+    # resize x
+    #   first reorient
+    reoriented = tf.transpose(resume_b_x, [0, 3, 2, 1, 4])
+    #   squeeze and 2d resize
+    squeeze_b_z = tf.reshape(
+        reoriented, [-1, y_size_new, x_size, c_size])
+    resize_b_z = tf.image.resize_bilinear(
+        squeeze_b_z, [y_size_new, x_size_new])
+    resume_b_z = tf.reshape(
+        resize_b_z, [b_size, z_size_new, y_size_new, x_size_new, c_size])
+
+    output_tensor = tf.transpose(resume_b_z, [0, 3, 2, 1, 4])
+    return output_tensor
 ###################################################################################################
 ###############################################################################
 @layer_register(log_shape=True)
@@ -306,7 +338,8 @@ class Model(ModelDesc):
           
 
             # x = tf_2tanh(x)
-            x  = inputs - VGG19_MEAN_TENSOR
+            # x  = inputs - VGG19_MEAN_TENSOR
+            x = inputs - VGG19_MEAN_TENSOR / 255.0
             x = tf.expand_dims(x, axis=0) # to 1 256 256 256 3
             # x = tf.transpose(x, [4, 1, 2, 3, 0]) # 
             x = (LinearWrap(x)
@@ -336,11 +369,11 @@ class Model(ModelDesc):
                 .Conv3DTranspose('conv4b',  32, strides = 2, padding='SAME') #here 3x32x32x32x32
                 .Conv3DTranspose('conv3b',  16, strides = 2, padding='SAME') #here 3x64x64x64x16
                 .Conv3DTranspose('conv2b',   8, strides = 2, padding='SAME') #here 3x128x128x128x8
-                .Conv3DTranspose('conv1b',   3, strides = 2, padding='SAME') #here 3x256x256x256x1
+                .Conv3DTranspose('conv1b',   3, strides = 2, padding='SAME', activation=tf.nn.tanh) #here 3x256x256x256x1
                 ()) 
-            # x = tf_2imag(x)
+            x = tf_2imag(x)
             x = tf.squeeze(x)
-            x = x + VGG19_MEAN_TENSOR
+            # x = x + VGG19_MEAN_TENSOR
             return x
 
            
@@ -350,7 +383,8 @@ class Model(ModelDesc):
         with varreplace.freeze_variables():
             with argscope([Conv2D], kernel_shape=3, nl=tf.nn.relu):
                 # print(inputs.get_shape())
-                x  = inputs - VGG19_MEAN_TENSOR
+                # x  = inputs - VGG19_MEAN_TENSOR
+                x = inputs - VGG19_MEAN_TENSOR / 255.0
                 conv1_1 = Conv2D('conv1_1', x, 64)
                 conv1_2 = Conv2D('conv1_2', conv1_1, 64)
                 pool1 = MaxPooling('pool1', conv1_2, 2)  # 64
@@ -419,28 +453,30 @@ class Model(ModelDesc):
                 # conv1_0 = conv1_0 + VGG19_MEAN_TENSOR
                 # return conv1_0 # List of feature maps
 
-                x = upsample(x) # pool5
+                x = Upsample2D(x) # pool5
                 x = Conv2D('conv_post_5_4', x, 512)
                 x = Conv2D('conv_post_5_3', x, 512)
                 x = Conv2D('conv_post_5_2', x, 512)
                 x = Conv2D('conv_post_5_1', x, 512)
-                x = upsample(x) # pool4
+                x = Upsample2D(x) # pool4
                 x = Conv2D('conv_post_4_4', x, 512)
                 x = Conv2D('conv_post_4_3', x, 512)
                 x = Conv2D('conv_post_4_2', x, 512)
                 x = Conv2D('conv_post_4_1', x, 512)
-                x = upsample(x) # pool4
+                x = Upsample2D(x) # pool4
                 x = Conv2D('conv_post_3_4', x, 256)
                 x = Conv2D('conv_post_3_3', x, 256)
                 x = Conv2D('conv_post_3_2', x, 256)
                 x = Conv2D('conv_post_3_1', x, 256)
-                x = upsample(x) # pool4
+                x = Upsample2D(x) # pool4
                 x = Conv2D('conv_post_2_2', x, 128)
                 x = Conv2D('conv_post_2_1', x, 128)
-                x = upsample(x) # pool4
+                x = Upsample2D(x) # pool4
                 x = Conv2D('conv_post_1_2', x, 64)
                 x = Conv2D('conv_post_1_1', x, 64)        
-                x = Conv2D('conv_post_0_0', x, 3)
+                x = Conv2D('conv_post_0_0', x, 3, activation=tf.nn.tanh)
+                x = tf_2imag(x)
+                # x = x + VGG19_MEAN_TENSOR
                 return x
         
     def _get_inputs(self):
@@ -898,4 +934,5 @@ if __name__ == '__main__':
         # SyncMultiGPUTrainer(config).train()
         launch_train_with_config(
             config,
+            # AsyncMultiGPUTrainer([0,1]))
             QueueInputTrainer())
