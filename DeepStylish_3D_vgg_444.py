@@ -111,6 +111,11 @@ def Subpix2D(inputs, chan, scale=2, stride=1, nl=tf.nn.leaky_relu):
             results = tf.depth_to_space(results, scale, name='depth2space', data_format='NHWC')
         return results
 
+@layer_register(log_shape=True)
+def upsample(x, factor=2):
+    _, h, w, _ = x.get_shape().as_list()
+    x = tf.image.resize_nearest_neighbor(x, [factor * h, factor * w], align_corners=True)
+    return x
 ###################################################################################################
 ###############################################################################
 @layer_register(log_shape=True)
@@ -384,34 +389,59 @@ class Model(ModelDesc):
                 # 1 8 8 512
                 # x = tf.reshape(x, [-1, 4, 4, 3]) #
                 x = tf.reshape(x, [-1, 8, 8, 512]) #
-                pool5 = Subpix2D('pool5',   x,  256)  # 16
-                conv5_4 = Conv2D('conv5_4', pool5,   256)
-                conv5_3 = Conv2D('conv5_3', conv5_4, 256)
-                conv5_2 = Conv2D('conv5_2', conv5_3, 256)
-                conv5_1 = Conv2D('conv5_1', conv5_2, 256)
-                
-                pool4 = Subpix2D('pool4',   conv5_1, 256)  # 16
-                conv4_4 = Conv2D('conv4_4', pool4,   256)
-                conv4_3 = Conv2D('conv4_3', conv4_4, 256)
-                conv4_2 = Conv2D('conv4_2', conv4_3, 256)
-                conv4_1 = Conv2D('conv4_1', conv4_2, 256)
 
-                pool3 = Subpix2D('pool3',   conv4_1, 256)  # 16
-                conv3_4 = Conv2D('conv3_4', pool3,   256)
-                conv3_3 = Conv2D('conv3_3', conv3_4, 256)
-                conv3_2 = Conv2D('conv3_2', conv3_3, 256)
-                conv3_1 = Conv2D('conv3_1', conv3_2, 256)
-
-                pool2 = Subpix2D('pool2',   conv3_1, 128)  # 8
-                conv2_2 = Conv2D('conv2_2', pool2,   128)
-                conv2_1 = Conv2D('conv2_1', conv2_2, 128)
+                # pool5 = Deconv2D('pool5',   x,  256)  # 16
+                # conv5_4 = Conv2D('conv5_4', pool5,   256)
+                # conv5_3 = Conv2D('conv5_3', conv5_4, 256)
+                # conv5_2 = Conv2D('conv5_2', conv5_3, 256)
+                # conv5_1 = Conv2D('conv5_1', conv5_2, 256)
                 
-                pool1 = Subpix2D('pool1',   conv2_1, 64)  # 64
-                conv1_2 = Conv2D('conv1_2', pool1,   64)
-                conv1_1 = Conv2D('conv1_1', conv1_2, 64)
-                conv1_0 = Conv2D('conv1_0', conv1_1, 3)
-                conv1_0 = conv1_0 + VGG19_MEAN_TENSOR
-                return conv1_0 # List of feature maps
+                # pool4 = Deconv2D('pool4',   conv5_1, 256)  # 16
+                # conv4_4 = Conv2D('conv4_4', pool4,   256)
+                # conv4_3 = Conv2D('conv4_3', conv4_4, 256)
+                # conv4_2 = Conv2D('conv4_2', conv4_3, 256)
+                # conv4_1 = Conv2D('conv4_1', conv4_2, 256)
+
+                # pool3 = Deconv2D('pool3',   conv4_1, 256)  # 16
+                # conv3_4 = Conv2D('conv3_4', pool3,   256)
+                # conv3_3 = Conv2D('conv3_3', conv3_4, 256)
+                # conv3_2 = Conv2D('conv3_2', conv3_3, 256)
+                # conv3_1 = Conv2D('conv3_1', conv3_2, 256)
+
+                # pool2 = Deconv2D('pool2',   conv3_1, 128)  # 8
+                # conv2_2 = Conv2D('conv2_2', pool2,   128)
+                # conv2_1 = Conv2D('conv2_1', conv2_2, 128)
+                
+                # pool1 = Deconv2D('pool1',   conv2_1, 64)  # 64
+                # conv1_2 = Conv2D('conv1_2', pool1,   64)
+                # conv1_1 = Conv2D('conv1_1', conv1_2, 64)
+                # conv1_0 = Conv2D('conv1_0', conv1_1, 3)
+                # conv1_0 = conv1_0 + VGG19_MEAN_TENSOR
+                # return conv1_0 # List of feature maps
+
+                x = upsample(x) # pool5
+                x = Conv2D('conv_post_5_4', x, 512)
+                x = Conv2D('conv_post_5_3', x, 512)
+                x = Conv2D('conv_post_5_2', x, 512)
+                x = Conv2D('conv_post_5_1', x, 512)
+                x = upsample(x) # pool4
+                x = Conv2D('conv_post_4_4', x, 512)
+                x = Conv2D('conv_post_4_3', x, 512)
+                x = Conv2D('conv_post_4_2', x, 512)
+                x = Conv2D('conv_post_4_1', x, 512)
+                x = upsample(x) # pool4
+                x = Conv2D('conv_post_3_4', x, 256)
+                x = Conv2D('conv_post_3_3', x, 256)
+                x = Conv2D('conv_post_3_2', x, 256)
+                x = Conv2D('conv_post_3_1', x, 256)
+                x = upsample(x) # pool4
+                x = Conv2D('conv_post_2_2', x, 128)
+                x = Conv2D('conv_post_2_1', x, 128)
+                x = upsample(x) # pool4
+                x = Conv2D('conv_post_1_2', x, 64)
+                x = Conv2D('conv_post_1_1', x, 64)        
+                x = Conv2D('conv_post_0_0', x, 3)
+                return x
         
     def _get_inputs(self):
         return [
